@@ -1,0 +1,7 @@
+# Credenciales reales — nunca se suben al repositorio
+shopify/config.js
+
+# Sistema / editor
+.DS_Store
+node_modules/
+*.log
