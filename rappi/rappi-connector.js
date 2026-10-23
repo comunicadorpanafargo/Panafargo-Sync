@@ -18,6 +18,7 @@
 
 import { CATEGORIAS_RAPPI, UNIDAD_PESO_SHOPIFY_A_RAPPI } from "./rappi-catalog.js";
 import { sugerirCategoriaAutomatica } from "./rappi-category-match.js";
+import { calcularPrecioRappi } from "../utils/model.js";
 import {
   obtenerEquivalenciaCategoria,
   guardarEquivalenciaCategoria,
@@ -89,7 +90,10 @@ export function validarCamposObligatoriosRappi(producto) {
  * @returns {Promise<{ok: true, sku: string, rappiProduct: object} | {ok: false, sku: string, faltantes: Array}>}
  */
 export async function prepararParaRappi(producto) {
-  const faltantes = validarCamposObligatoriosRappi(producto);
+  // Recalcular también los productos cargados antes de cambiar la fórmula,
+  // sin modificar el producto almacenado ni los precios publicados en Rappi.
+  const precioRappi = calcularPrecioRappi(producto.precio, producto.precio_comparacion);
+  const faltantes = validarCamposObligatoriosRappi({ ...producto, precio_rappi: precioRappi });
 
   // ---- Categoría: obligatoria, debe resolver a una categoría real de Rappi ----
   let categoriaRappi = null;
@@ -142,7 +146,7 @@ export async function prepararParaRappi(producto) {
       ean: producto.ean || "",
       descripcion: producto.descripcion,
       presentacion: producto.presentacion,
-      precio: producto.precio_rappi,
+      precio: precioRappi,
       inventario: producto.inventario,
       disponible_para_venta: producto.disponible_para_venta,
       es_pesable: ES_PESABLE,

@@ -135,7 +135,7 @@ async function descargarPlantillaAsociacionGenerada() {
   try {
     const productos = listos.map((f) => ({
       sku: f.producto.sku,
-      precio: f.producto.precio_rappi,
+      precio: f.resultado.rappiProduct.precio,
       inventario: f.producto.inventario,
     }));
     const { blob, filasEscritas, noEncontrados } = await generarPlantillaAsociacion(productos);

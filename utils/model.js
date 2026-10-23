@@ -107,6 +107,11 @@ function normalizarTextoShopify(valor) {
   return texto || null;
 }
 
+/**
+ * Usa el precio normal de Shopify. Hasta $444.500 inclusive resta 20 %;
+ * por encima resta 10 %. Divide entre 0,70 y redondea solo el resultado
+ * final hacia arriba a centenas, conservando los múltiplos exactos.
+ */
 export function calcularPrecioRappi(precio, precioComparacion) {
   const precioActual = numeroNumero(precio);
   const precioAnterior = numeroNumero(precioComparacion);
@@ -120,8 +125,10 @@ export function calcularPrecioRappi(precio, precioComparacion) {
   }
 
   const base = BigInt(precioBase);
-  const numerador = precioBase >= 400000 ? 5n : 10n;
-  const denominador = precioBase >= 400000 ? 400n : 900n;
+  // P × 0,80 / 0,70 = P × 8/7; en el tramo superior es P × 9/7.
+  // Dividir además entre 100 permite redondear directamente a centenas.
+  const numerador = precioBase > 444500 ? 9n : 8n;
+  const denominador = 700n;
   const centenas = (base * numerador + denominador - 1n) / denominador;
   const precioRappi = centenas * 100n;
 
