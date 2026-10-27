@@ -2,116 +2,80 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Panafargo Sync</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <nav class="tabs" aria-label="Secciones principales">
-    <button class="tab-btn activo" data-tab="lote">Validar productos</button>
-    <button class="tab-btn" data-tab="rappi">Preparar Rappi</button>
+  <header class="app-header">
+    <img src="../icons/icon48.png" width="36" height="36" alt="" />
+    <div><h1>Panafargo Sync</h1><p>De Shopify a Rappi, paso a paso</p></div>
+    <button id="btn-nuevo-lote" class="button-quiet" type="button">Nuevo lote</button>
+  </header>
+  <nav class="tabs" aria-label="Pasos de preparación">
+    <button class="tab-btn activo" data-tab="lote" aria-current="step"><span>1</span> Revisar productos</button>
+    <button class="tab-btn" data-tab="rappi"><span>2</span> Preparar Rappi</button>
+    <button class="tab-btn" data-tab="asociacion"><span>3</span> Asociar</button>
   </nav>
-
-  <!-- ===================== V1.0 — Búsqueda individual ===================== -->
-  <section id="tab-individual" class="tab-panel">
-    <div class="campo">
-      <label for="sku-input">SKU</label>
-      <div class="fila">
-        <input id="sku-input" type="text" placeholder="Ej: 11384-3" />
-        <button id="btn-buscar">Buscar en Shopify</button>
-      </div>
-    </div>
-
-    <div id="resultado" class="resultado oculto">
-      <img id="resultado-img" src="" alt="" />
-      <div class="resultado-datos">
-        <p><strong id="resultado-nombre"></strong></p>
-        <p>SKU: <span id="resultado-sku"></span></p>
-        <p>Estado: <span id="resultado-estado" class="estado"></span></p>
-      </div>
-      <div class="acciones">
-        <button id="btn-validar">Validar</button>
-        <button id="btn-descargar" disabled>Descargar imagen</button>
-      </div>
-    </div>
-
-    <p id="mensaje" class="mensaje"></p>
-  </section>
-
-  <!-- ===================== V1.1 — Prueba con 10 productos ===================== -->
-  <section id="tab-lote" class="tab-panel activo">
-    <p class="ayuda">Pega hasta 10 SKU, uno por línea. Las líneas están numeradas; oprime "Extraer SKU" al terminar.</p>
-    <div class="sku-editor">
-      <ol class="sku-lineas" aria-hidden="true">
-        <li>1</li><li>2</li><li>3</li><li>4</li><li>5</li>
-        <li>6</li><li>7</li><li>8</li><li>9</li><li>10</li>
-      </ol>
-      <textarea id="lote-input" rows="10" wrap="off" spellcheck="false" aria-label="SKU, máximo 10 líneas" aria-describedby="lote-conteo" placeholder="Pega aquí los SKU, uno por línea"></textarea>
-    </div>
-    <p id="lote-conteo" class="sku-conteo" aria-live="polite">0/10 SKU</p>
-    <div class="fila">
-      <button id="btn-procesar-lote">Extraer SKU</button>
-    </div>
-    <p id="mensaje-matriz" class="mensaje"></p>
-
-    <table id="tabla-matriz" class="tabla-matriz oculto">
-      <thead>
-        <tr>
-          <th>SKU</th>
-          <th>Shopify</th>
-          <th>Imagen</th>
-          <th>Validación</th>
-          <th>Observaciones</th>
-        </tr>
-      </thead>
-      <tbody id="tabla-matriz-body"></tbody>
-    </table>
-  </section>
-
-  <!-- ===================== V2 — Preparar Rappi ===================== -->
-  <section id="tab-rappi" class="tab-panel">
-    <section class="grupo-rappi" aria-labelledby="titulo-productos-rappi">
-      <h2 id="titulo-productos-rappi">Productos validados</h2>
-      <p class="ayuda">Solo aparecen productos completos para Rappi. Selecciónalos individualmente o usa “Todos”.</p>
-      <button id="btn-cargar-rappi">Cargar productos validados</button>
-
-      <table id="tabla-rappi" class="tabla-matriz oculto">
-        <thead>
-          <tr>
-            <th><label class="seleccionar-todos"><input id="seleccionar-todos-rappi" type="checkbox" aria-label="Seleccionar todos los productos listos" /> Todos</label></th>
-            <th>SKU</th>
-            <th>Nombre</th>
-            <th>Estado</th>
-            <th>Pendiente / acción</th>
-            <th>Quitar</th>
-          </tr>
-        </thead>
-        <tbody id="tabla-rappi-body"></tbody>
-      </table>
-
-      <div class="acciones-rappi">
-        <button id="btn-generar-lote-rappi" disabled>Generar y descargar lote (.xlsx)</button>
-        <button id="btn-subir-mi-tienda" disabled>Subir a Mi Tienda</button>
-      </div>
-      <p class="ayuda">Para subir, abre <a href="https://mitienda.rappi.com.co" target="_blank" rel="noopener">Mi Tienda</a> e inicia sesión.</p>
-      <p id="mensaje-rappi" class="mensaje"></p>
+  <main>
+    <section id="tab-lote" class="tab-panel activo" aria-labelledby="titulo-busqueda">
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">PASO 1</p><h2 id="titulo-busqueda">Encuentra todas las publicaciones</h2></div></div>
+        <label for="lote-input">Códigos de producto, uno por línea</label>
+        <p class="ayuda" id="ayuda-sku">Hasta 10 productos base. <code>11351</code> busca todos sus diseños; <code>11351/MoveForward</code> busca solo esa publicación. Los guiones se conservan.</p>
+        <div class="sku-editor">
+          <ol id="sku-lineas" class="sku-lineas" aria-hidden="true"></ol>
+          <textarea id="lote-input" rows="7" wrap="off" spellcheck="false" aria-describedby="ayuda-sku lote-conteo" placeholder="11351&#10;10498-1&#10;10511"></textarea>
+        </div>
+        <p id="lote-conteo" class="sku-conteo" aria-live="polite">0 de 10 productos base</p>
+        <div class="action-row">
+          <button id="btn-procesar-lote" type="button">Buscar y validar</button>
+          <button id="btn-reintentar-pendientes" class="button-secondary" type="button" disabled>Reintentar pendientes</button>
+        </div>
+        <p id="mensaje-matriz" class="mensaje" role="status" aria-live="polite"></p>
+        <p class="ayuda stock-help">En los SKU con <code>/</code>, las existencias son el conteo manual de esa publicación en Shopify. No se copia el inventario del producto base ni se toma de Webcol.</p>
+      </section>
+      <section class="summary-grid" aria-label="Resumen del lote" aria-live="polite">
+        <div><strong id="resumen-bases">0</strong><span>productos base</span></div>
+        <div><strong id="resumen-publicaciones">0</strong><span>publicaciones</span></div>
+        <div class="summary-ready"><strong id="resumen-listos">0</strong><span>listas para Rappi</span></div>
+        <div><strong id="resumen-pendientes">0</strong><span>por revisar</span></div>
+      </section>
+      <div class="list-heading"><h2>Resultado por publicación</h2><button id="btn-descargar-matriz" class="button-quiet" type="button" disabled>Descargar reporte CSV</button></div>
+      <div id="lista-productos" class="product-list"><p class="empty-state">Pega los códigos y pulsa «Buscar y validar». Aquí verás cada diseño y lo que falta para prepararlo.</p></div>
+      <div class="footer-actions"><button id="btn-continuar-rappi" type="button" disabled>Continuar a Rappi</button><span class="ayuda">Solo se incluyen publicaciones listas.</span></div>
     </section>
 
-    <section id="seccion-plantilla-asociacion" class="grupo-rappi" aria-labelledby="titulo-plantilla-asociacion">
-      <h2 id="titulo-plantilla-asociacion">Plantilla de asociación</h2>
-      <p class="ayuda">Selecciona la plantilla .xlsx de asociación enviada por Rappi oprime "Guardar plantilla" y ejecuta "Descargar plantilla generada".</p>
-      <input type="file" id="input-plantilla-asociacion" accept=".xlsx" aria-label="Archivo de plantilla de asociación" />
-      <div class="acciones-rappi">
-        <button id="btn-guardar-plantilla-asociacion" disabled>Guardar plantilla</button>
-        <button id="btn-subir-plantilla-asociacion-ahora" disabled>Cargar y dejar lista</button>
-        <button id="btn-descargar-plantilla-asociacion-generada" disabled>Descargar plantilla generada</button>
-      </div>
-      <p id="mensaje-plantilla-asociacion" class="mensaje"></p>
-      <p id="mensaje-plantilla-asociacion-ahora" class="mensaje"></p>
-      <p id="mensaje-plantilla-asociacion-generada" class="mensaje"></p>
+    <section id="tab-rappi" class="tab-panel" aria-labelledby="titulo-rappi">
+      <section class="panel">
+        <p class="eyebrow">PASO 2</p><h2 id="titulo-rappi">Revisa el lote antes de subir</h2>
+        <p class="ayuda">Las publicaciones listas se seleccionan automáticamente. Puedes quitar cualquiera. Verás las existencias de Shopify y la cantidad que se reservará para Rappi.</p>
+        <div class="selection-bar"><label class="seleccionar-todos"><input id="seleccionar-todos-rappi" type="checkbox" /> Seleccionar todas las listas</label><span id="seleccion-rappi" aria-live="polite">0 seleccionadas</span></div>
+        <p id="aviso-imagenes-disenos" class="notice" hidden>Este lote contiene SKU con «/». Se conserva el código completo en la plantilla. Las imágenes se descargarán con una guía para asignarlas por publicación en Mi Tienda; el ZIP automático no tiene verificada esa coincidencia.</p>
+        <div class="footer-actions rappi-actions">
+          <button id="btn-subir-mi-tienda" type="button" disabled>Preparar en Mi Tienda</button>
+          <button id="btn-generar-lote-rappi" class="button-secondary" type="button" disabled>Descargar lote e imágenes</button>
+        </div>
+        <p id="mensaje-rappi" class="mensaje" role="status" aria-live="polite"></p>
+        <div id="lista-rappi" class="product-list"><p class="empty-state">Primero busca los productos en el paso 1.</p></div>
+        <p class="ayuda">Mi Tienda necesita tu sesión iniciada. La confirmación final de asociación la haces tú en Rappi.</p>
+      </section>
     </section>
-  </section>
 
-  <!-- SheetJS (.xlsx) y JSZip (.zip de imágenes), deben cargar ANTES de popup.js -->
+    <section id="tab-asociacion" class="tab-panel" aria-labelledby="titulo-plantilla-asociacion">
+      <section class="panel" id="seccion-plantilla-asociacion">
+        <p class="eyebrow">PASO 3</p><h2 id="titulo-plantilla-asociacion">Completa precios y existencias</h2>
+        <ol class="instructions"><li>Crea los productos en Mi Tienda y espera la plantilla de asociación de Rappi.</li><li>Selecciona ese archivo aquí. Se guardará automáticamente.</li><li>Descarga el archivo completado y súbelo en Mi Tienda. Revisa y confirma la asociación allí.</li></ol>
+        <label for="input-plantilla-asociacion">Plantilla enviada por Rappi (.xlsx)</label>
+        <input type="file" id="input-plantilla-asociacion" accept=".xlsx" />
+        <p id="plantilla-actual" class="ayuda">Selecciona la plantilla de tu lote.</p>
+        <p id="mensaje-plantilla-asociacion" class="mensaje" role="status"></p>
+        <button id="btn-descargar-plantilla-asociacion-generada" type="button" disabled>Descargar precios y existencias</button>
+        <p id="mensaje-plantilla-asociacion-generada" class="mensaje" role="status" aria-live="polite"></p>
+        <p class="notice">La asociación conserva el SKU completo. Un diseño no recibe las existencias de otro. Se mantiene la reserva: menos de 50 unidades → un tercio; desde 50 → la mitad, redondeando cantidades hacia abajo.</p>
+      </section>
+    </section>
+  </main>
   <script src="../vendor/xlsx.full.min.js"></script>
   <script src="../vendor/jszip.min.js"></script>
   <script type="module" src="popup.js"></script>

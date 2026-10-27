@@ -3,10 +3,7 @@
 // ============================================================
 // Genera el .xlsx de asociación de productos (Precio y Unidades
 // disponibles) a partir de la plantilla que Rappi manda por correo —
-// la misma lógica que usa el content script en el flujo automático
-// (ver generarPlantillaAsociacionLocal en mi-tienda-content-script.js),
-// pero reutilizable desde el popup para poder DESCARGAR el archivo
-// exacto que se generaría, y así probarlo subiéndolo a mano a Rappi.
+// El usuario descarga el resultado y confirma su asociación en Rappi.
 //
 // Reglas (confirmadas con el usuario sobre la plantilla real):
 // - Columnas B-J (ID, ID de tienda, nombre de tienda, ID de producto,
@@ -32,7 +29,7 @@ const COLUMNA_UNIDADES_ASOCIACION = "N";
 const FILA_INICIO_DATOS_ASOCIACION = 6;
 const RUTA_PLANTILLA_ASOCIACION_POR_DEFECTO = "ProductosAsociacion-es.xlsx";
 
-function calcularUnidadesDisponiblesAsociacion(inventario) {
+export function calcularUnidadesDisponiblesAsociacion(inventario) {
   if (inventario == null || !Number.isFinite(Number(inventario))) return 0;
   const cantidad = Math.max(0, Math.floor(Number(inventario)));
   return cantidad < 50 ? Math.floor(cantidad / 3) : Math.floor(cantidad / 2);
@@ -77,18 +74,20 @@ export async function generarPlantillaAsociacion(productos) {
   if (!hoja) throw new Error(`La plantilla de asociación no tiene una hoja "${HOJA_PRODUCTOS_ASOCIACION}".`);
 
   const rango = window.XLSX.utils.decode_range(hoja["!ref"]);
-  const filaPorSku = {};
+  const filaPorSku = new Map();
   for (let r = rango.s.r; r <= rango.e.r; r++) {
     const celda = hoja[`${COLUMNA_SKU_ASOCIACION}${r + 1}`];
     if (celda && typeof celda.v === "string" && celda.v.startsWith(PREFIJO_SKU_ASOCIACION)) {
-      filaPorSku[celda.v.slice(PREFIJO_SKU_ASOCIACION.length)] = r + 1;
+      const skuCompleto = celda.v.slice(PREFIJO_SKU_ASOCIACION.length);
+      if (filaPorSku.has(skuCompleto)) throw new Error(`La plantilla tiene varias filas para el SKU completo ${skuCompleto}.`);
+      filaPorSku.set(skuCompleto, r + 1);
     }
   }
 
   const noEncontrados = [];
   const filasDelLote = new Set();
   productos.forEach((producto) => {
-    const fila = filaPorSku[producto.sku];
+    const fila = filaPorSku.get(producto.sku);
     if (!fila) {
       noEncontrados.push(producto.sku);
       return;

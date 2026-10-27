@@ -16,8 +16,8 @@ chrome.action.onClicked.addListener(async () => {
   const ventana = await chrome.windows.create({
     type: "popup",
     url: popupUrl,
-    width: 420,
-    height: 700,
+    width: 1040,
+    height: 840,
   });
   await chrome.storage.session.set({ [KEY_VENTANA_POPUP]: ventana.id });
   await limpiarSesionRappi();
@@ -27,7 +27,8 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   const { [KEY_VENTANA_POPUP]: popupWindowId } = await chrome.storage.session.get(KEY_VENTANA_POPUP);
   if (windowId !== popupWindowId) return;
 
-  await chrome.storage.local.remove(["panafargo_productos", "panafargo_matriz_v11"]);
+  // El lote se conserva al cerrar la ventana. "Nuevo lote" lo borra
+  // explícitamente para no perder búsquedas y revisiones ya realizadas.
   await chrome.storage.session.remove(KEY_VENTANA_POPUP);
   await limpiarSesionRappi();
 });

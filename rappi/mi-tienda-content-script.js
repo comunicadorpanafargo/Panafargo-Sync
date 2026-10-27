@@ -48,27 +48,9 @@ const DURACION_BARRA_REINTENTO_404_MS = 58000;
 let timerReintento404 = null;
 let intervaloProgresoReintento404 = null;
 let barraProgresoReintento404 = null;
+let subidaEnCurso = false;
 
-const SELECTOR_INPUT_PLANTILLA_ASOCIACION =
-  'input.file[type="file"][accept=".csv,.xlsx"], input[type="file"][accept*=".xlsx"]';
 const TEXTO_BOTON_ASOCIAR_PRODUCTOS = "Asociar productos";
-
-function esperarBotonHabilitadoConTexto(texto, timeoutMs) {
-  return new Promise((resolve) => {
-    const intervalo = setInterval(() => {
-      const el = buscarBotonPorTexto(texto);
-      if (el && !el.disabled) {
-        clearInterval(intervalo);
-        clearTimeout(timer);
-        resolve(el);
-      }
-    }, 300);
-    const timer = setTimeout(() => {
-      clearInterval(intervalo);
-      resolve(null);
-    }, timeoutMs);
-  });
-}
 
 /**
  * Si esta carga de página viene de una auto-recarga programada tras
@@ -98,14 +80,20 @@ function esperarBotonHabilitadoConTexto(texto, timeoutMs) {
 
   // La recarga resolvió la vista de error; continúa la creación, pero
   // nunca pulsa "Asociar productos".
+  subidaEnCurso = true;
   sessionStorage.removeItem(CLAVE_REINTENTO_404);
-  continuarYCcrearProductos()
-    .catch((err) => console.error("No se pudo continuar la creación de productos tras la recarga:", err));
+  try {
+    await continuarYCcrearProductos();
+  } catch (err) {
+    console.error("No se pudo continuar la creación de productos tras la recarga:", err);
+  } finally {
+    subidaEnCurso = false;
+  }
 })();
 
 chrome.runtime.onMessage.addListener((mensaje, _sender, sendResponse) => {
   if (mensaje?.tipo === "RAPPI_LIMPIAR_SESION") {
-    const cargaEnCurso = sessionStorage.getItem(CLAVE_REINTENTO_404) !== null;
+    const cargaEnCurso = subidaEnCurso || sessionStorage.getItem(CLAVE_REINTENTO_404) !== null;
     if (!cargaEnCurso) {
       sessionStorage.removeItem(CLAVE_REINTENTO_404);
       clearTimeout(timerReintento404);
@@ -117,59 +105,43 @@ chrome.runtime.onMessage.addListener((mensaje, _sender, sendResponse) => {
   }
 
   if (mensaje?.tipo === "RAPPI_SUBIR_LOTE") {
-    ejecutarSubida(mensaje)
-      .then((resultado) => sendResponse({ ok: true, ...resultado }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    if (subidaEnCurso || sessionStorage.getItem(CLAVE_REINTENTO_404) !== null) {
+      sendResponse({
+        ok: false,
+        error: "Ya hay una carga de productos en curso o una recuperación pendiente. Espera a que termine y revisa Mi Tienda antes de iniciar otro lote.",
+      });
+      return;
+    }
+    subidaEnCurso = true;
+    (async () => {
+      let respuesta;
+      try {
+        respuesta = { ok: true, ...await ejecutarSubida(mensaje) };
+      } catch (err) {
+        respuesta = { ok: false, error: err.message };
+      } finally {
+        subidaEnCurso = false;
+      }
+      sendResponse(respuesta);
+    })();
     return true; // indica respuesta asíncrona
   }
 
-  if (mensaje?.tipo === "RAPPI_SUBIR_PLANTILLA_ASOCIACION_AHORA") {
-    subirPlantillaAsociacionYaGenerada(mensaje.archivoBase64, mensaje.archivoNombre)
-      .then((resultado) => sendResponse({ ok: true, ...resultado }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
 });
 
-/**
- * Sube un archivo de asociación YA ARMADO (el usuario lo subió tal
- * cual desde el popup) directo al input de "Subir plantilla" de
- * asociación de la pantalla actual — no rellena nada, no hace
- * matching por SKU, asume que el archivo ya viene listo. Pensado para
- * cuando la pestaña ya está parada en esa pantalla (manual o
- * reintento), sin pasar por todo el flujo de creación de productos.
- */
-async function subirPlantillaAsociacionYaGenerada(archivoBase64, archivoNombre) {
-  const input = await esperarSelector(SELECTOR_INPUT_PLANTILLA_ASOCIACION, 15000);
-  if (!input) {
-    throw new Error(
-      'No encontré el input de "Subir plantilla" de asociación en esta pestaña. Verifica que estés parado en esa pantalla.'
-    );
-  }
-
-  const archivo = base64AArchivo(
-    archivoBase64,
-    archivoNombre || `asociacion_${Date.now()}.xlsx`,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  );
-  asignarArchivosAInput(input, [archivo]);
-
-  const botonAsociarFinal = await esperarBotonHabilitadoConTexto(TEXTO_BOTON_ASOCIAR_PRODUCTOS, 120000);
-  if (!botonAsociarFinal) {
-    return {
-      mensaje:
-        'La plantilla se cargó, pero "Asociar productos" no se habilitó en 2 minutos. Revisa el archivo en Mi Tienda.',
-    };
-  }
-  return { mensaje: 'Plantilla lista. Revisa los datos y pulsa "Asociar productos" en Mi Tienda para finalizar.' };
-}
-
-async function ejecutarSubida({ xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre }) {
+async function ejecutarSubida({
+  xlsxBase64,
+  xlsxNombre,
+  imagenesZipBase64,
+  imagenesZipNombre,
+  imagenesManualesPorSku = false,
+  skus = [],
+}) {
   let etapa = "inicio";
   try {
     etapa = "plantilla";
     return await ejecutarSubidaPorEtapas(
-      { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre },
+      { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesManualesPorSku, skus },
       (nombreEtapa) => { etapa = nombreEtapa; }
     );
   } catch (err) {
@@ -178,7 +150,7 @@ async function ejecutarSubida({ xlsxBase64, xlsxNombre, imagenesZipBase64, image
 }
 
 async function ejecutarSubidaPorEtapas(
-  { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre },
+  { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesManualesPorSku = false, skus = [] },
   establecerEtapa
 ) {
   if (normalizarTexto(document.body?.innerText).includes("pagina no encontrada")) {
@@ -189,14 +161,14 @@ async function ejecutarSubidaPorEtapas(
 
   const estadoInicial = await esperarEstadoDelFlujo(20000);
   if (estadoInicial?.tipo === "imagenes") {
-    establecerEtapa("continuar_desde_revision");
-    return subirImagenes(
-      imagenesZipBase64,
-      imagenesZipNombre,
-      establecerEtapa,
-      estadoInicial.enlace,
-      estadoInicial.inputZip
-    );
+    if (imagenesManualesPorSku) return resultadoImagenesManuales(skus, false);
+    return {
+      paso: "revision_lote_existente",
+      plantillaSubida: false,
+      productosPublicados: false,
+      mensaje:
+        "Mi Tienda ya tiene un lote en revisión de imágenes. No se cargó la nueva plantilla, no se enviaron imágenes ni se pulsó Crear productos. Revisa el lote existente o vuelve a la pantalla de carga de plantilla para empezar uno nuevo.",
+    };
   }
 
   if (estadoInicial?.tipo !== "plantilla") {
@@ -250,7 +222,34 @@ async function ejecutarSubidaPorEtapas(
   // la pantalla de imágenes (sin necesidad de un clic en "Continuar")
   // y no hace falta hacer nada más aquí.
 
+  if (imagenesManualesPorSku) {
+    establecerEtapa("revision_imagenes_manuales");
+    const revision = await esperarEstadoDelFlujo(20000, "imagenes");
+    if (!revision) {
+      throw new Error(
+        "Se cargó la plantilla, pero no se confirmó la pantalla de revisión de imágenes. Revisa Mi Tienda; no se cargaron imágenes ni se pulsó Crear productos."
+      );
+    }
+    return resultadoImagenesManuales(skus, true);
+  }
+
   return subirImagenes(imagenesZipBase64, imagenesZipNombre, establecerEtapa);
+}
+
+function resultadoImagenesManuales(skus, plantillaSubida) {
+  const skusCompletos = Array.isArray(skus)
+    ? [...new Set(skus.filter((sku) => typeof sku === "string" && sku.length > 0))]
+    : [];
+  const detalleSku = skusCompletos.length ? ` SKU completos: ${skusCompletos.join(", ")}.` : "";
+  return {
+    paso: "imagenes_manuales_por_sku",
+    plantillaSubida,
+    productosPublicados: false,
+    skus: skusCompletos,
+    mensaje: `${plantillaSubida
+      ? "Plantilla cargada y revisión de imágenes disponible."
+      : "Mi Tienda ya estaba en revisión de imágenes; no se volvió a cargar la plantilla. Verifica que corresponda a este lote."} Asigna las imágenes manualmente a cada SKU completo y revisa los productos antes de continuar en Mi Tienda.${detalleSku} La extensión no pulsó Crear productos ni Asociar productos.`,
+  };
 }
 
 function detectarEstadoDelFlujo() {
@@ -259,15 +258,22 @@ function detectarEstadoDelFlujo() {
   const tituloRevision = buscarElementoPorTexto("h1, h2, h3, p", TEXTO_TITULO_REVISION_IMAGENES);
   if (enlace || inputZip || tituloRevision) return { tipo: "imagenes", enlace, inputZip };
 
-  if (document.querySelector(SELECTOR_INPUT_PLANTILLA) || document.querySelector(SELECTOR_BOTON_PERSONALIZADOS)) {
+  if (
+    document.querySelector(SELECTOR_INPUT_PLANTILLA) ||
+    document.querySelector(SELECTOR_BOTON_PERSONALIZADOS) ||
+    document.querySelector(SELECTOR_BOTON_IR_A_SUBIR_PLANTILLA)
+  ) {
     return { tipo: "plantilla" };
   }
   return null;
 }
 
-function esperarEstadoDelFlujo(timeoutMs) {
+function esperarEstadoDelFlujo(timeoutMs, tipoEsperado = null) {
   return new Promise((resolve) => {
-    const revisar = () => detectarEstadoDelFlujo();
+    const revisar = () => {
+      const estado = detectarEstadoDelFlujo();
+      return !tipoEsperado || estado?.tipo === tipoEsperado ? estado : null;
+    };
     const estadoInicial = revisar();
     if (estadoInicial) return resolve(estadoInicial);
 
@@ -791,12 +797,6 @@ function esperarBotonHabilitadoConTexto(texto, timeoutMs) {
 }
 
 /**
- * Espera a que un elemento (por selector) exista Y no esté deshabilitado
- * (propiedad .disabled), sondeando cada 300ms — más confiable que un
- * MutationObserver de atributos cuando Angular controla el estado
- * mediante bindings.
- */
-/**
  * Espera a que se habilite "Continuar" en la pantalla de la
  * plantilla, O a que la pantalla ya haya avanzado sola a la de
  * imágenes (Rappi a veces salta directo sin un clic explícito, y en
@@ -818,43 +818,6 @@ function esperarContinuarPlantillaOAvance(timeoutMs) {
         clearInterval(intervalo);
         clearTimeout(timer);
         resolve({ tipo: "avanzo" });
-      }
-    }, 300);
-    const timer = setTimeout(() => {
-      clearInterval(intervalo);
-      resolve(null);
-    }, timeoutMs);
-  });
-}
-
-function esperarBotonHabilitado(selector, timeoutMs) {
-  return new Promise((resolve) => {
-    const intervalo = setInterval(() => {
-      const el = document.querySelector(selector);
-      if (el && !el.disabled) {
-        clearInterval(intervalo);
-        clearTimeout(timer);
-        resolve(el);
-      }
-    }, 300);
-    const timer = setTimeout(() => {
-      clearInterval(intervalo);
-      resolve(null);
-    }, timeoutMs);
-  });
-}
-
-/** Igual que esperarBotonHabilitado, pero buscando por texto dentro de un ámbito. */
-function esperarBotonHabilitadoPorTexto(ambito, texto, timeoutMs) {
-  return new Promise((resolve) => {
-    const intervalo = setInterval(() => {
-      const el = ambito.querySelector(SELECTOR_DRAWER)
-        ? buscarBotonContinuarDrawer(ambito)
-        : buscarBotonPorTextoEnAmbito(ambito, texto);
-      if (el && !el.disabled) {
-        clearInterval(intervalo);
-        clearTimeout(timer);
-        resolve(el);
       }
     }, 300);
     const timer = setTimeout(() => {
