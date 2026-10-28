@@ -178,7 +178,8 @@ async function tarea(idMensaje, accion, requiereSeleccion = true) {
     await accion(lista);
   } catch (error) {
     logger.error(error);
-    mensaje(idMensaje, error.message || "No se pudo completar la preparación.", "error");
+    const detalle = error.message || "No se pudo completar la preparación.";
+    mensaje(idMensaje, idMensaje === "mensaje-plantilla-asociacion" ? `${detalle} La plantilla actual se conserva.` : detalle, "error");
   } finally {
     ocupado = false;
     actualizarControles();
@@ -282,14 +283,16 @@ async function prepararEnMiTienda() {
 async function mostrarPlantillaGuardada() {
   try {
     const guardado = await chrome.storage.local.get("plantillaAsociacionNombre");
-    el("plantilla-actual").textContent = guardado.plantillaAsociacionNombre || "Plantilla incluida";
+    el("plantilla-actual").textContent = `Plantilla actual: ${guardado.plantillaAsociacionNombre || "incluida con la extensión"}`;
   } catch (error) {
+    el("plantilla-actual").textContent = "Plantilla actual: no se pudo comprobar";
     mensaje("mensaje-plantilla-asociacion", "No se pudo leer la plantilla guardada. Vuelve a seleccionarla.", "error");
   }
 }
 
 async function guardarPlantilla() {
-  const archivo = el("input-plantilla-asociacion").files?.[0];
+  const input = el("input-plantilla-asociacion");
+  const archivo = input.files?.[0];
   if (!archivo) return;
   await tarea("mensaje-plantilla-asociacion", async () => {
     mensaje("mensaje-plantilla-asociacion", "Comprobando la plantilla…");
@@ -320,9 +323,12 @@ async function guardarPlantilla() {
       plantillaAsociacionNombre: archivo.name,
       plantillaAsociacionFecha: Date.now(),
     });
-    el("plantilla-actual").textContent = archivo.name;
-    mensaje("mensaje-plantilla-asociacion", "Plantilla comprobada y guardada. Ya puedes generar la asociación.", "ok");
+    el("plantilla-actual").textContent = `Plantilla actual: ${archivo.name}`;
+    mensaje("mensaje-plantilla-asociacion", "Plantilla guardada automáticamente. Este archivo reemplaza al anterior para las próximas asociaciones.", "ok");
   }, false);
+  // La plantilla vigente se muestra arriba. Limpiar el selector permite
+  // volver a elegir un archivo actualizado que tenga el mismo nombre.
+  input.value = "";
 }
 
 async function descargarAsociacion() {

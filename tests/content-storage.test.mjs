@@ -98,6 +98,15 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   const operaciones = [];
   const sesion = new Map(recuperacion ? [["panafargoSync:zipReloadIntento", "1"]] : []);
   const intervalos = [];
+  const pantallas = new Set();
+  const crearElemento = () => ({
+    style: {},
+    setAttribute() {},
+    append() {},
+    appendChild() {},
+    animate: () => ({ cancel() {} }),
+    remove() { pantallas.delete(this); },
+  });
   const temporizadores = recuperacion ? {
     setInterval: (callback) => { intervalos.push(callback); return callback; },
     clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
@@ -110,7 +119,11 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
       setItem: (key, value) => sesion.set(key, String(value)),
     },
     chrome: { runtime: { onMessage: { addListener: (callback) => { receptor = callback; } } } },
-    document: { body: { innerText: "" }, querySelectorAll: () => [] },
+    document: {
+      body: { innerText: "", appendChild: (elemento) => pantallas.add(elemento) },
+      createElement: crearElemento,
+      querySelectorAll: () => [],
+    },
   });
   vm.runInContext(contenido, contexto, { filename: "mi-tienda-content-script.js" });
   const esperarEstadoReal = contexto.esperarEstadoDelFlujo;
@@ -133,7 +146,7 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   const enviar = (datos) => new Promise((resolve) => {
     receptor({ tipo: "RAPPI_SUBIR_LOTE", ...datos }, {}, resolve);
   });
-  return { contexto, operaciones, enviar, sesion, intervalos, esperarEstadoReal };
+  return { contexto, operaciones, enviar, sesion, intervalos, esperarEstadoReal, pantallas };
 }
 
 const plantilla = { xlsxBase64: "AA==", xlsxNombre: "lote-prueba.xlsx" };
@@ -238,8 +251,9 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
   });
 
   test("la continuación tras recarga conserva el bloqueo hasta terminar y no confirma la asociación", async () => {
-    const { contexto, enviar, operaciones, sesion, intervalos } = crearContenido("plantilla", { recuperacion: true });
+    const { contexto, enviar, operaciones, sesion, intervalos, pantallas } = crearContenido("plantilla", { recuperacion: true });
     assert.equal(sesion.has("panafargoSync:zipReloadIntento"), false);
+    assert.equal(pantallas.size, 1, "La espera sigue cubierta tras actualizar Mi Tienda.");
     assert.equal((await enviar(imagenesManuales)).ok, false);
     let confirmarPantallaAsociacion;
     contexto.buscarBotonPorTexto = () => ({ disabled: false, click: () => operaciones.push(["crear_tras_recarga"]) });
@@ -250,6 +264,23 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.equal((await enviar(imagenesManuales)).ok, false, "El indicador de sesión ya se retiró, pero la continuación sigue activa.");
     confirmarPantallaAsociacion({ click: () => operaciones.push(["asociar"]) });
     await new Promise(setImmediate);
+    assert.equal(pantallas.size, 0, "La pantalla de espera se retira al confirmar el resultado.");
+    assert.equal((await enviar(imagenesManuales)).ok, true);
+    assert.equal(operaciones.some(([accion]) => accion === "asociar"), false);
+  });
+
+  test("si falla la continuación tras recarga, se retira la espera y se libera el bloqueo", async () => {
+    const { contexto, enviar, operaciones, intervalos, pantallas } = crearContenido("plantilla", { recuperacion: true });
+    const errores = [];
+    contexto.console = { ...console, error: (...args) => errores.push(args) };
+    contexto.buscarBotonPorTexto = () => ({ disabled: false, click: () => operaciones.push(["crear_tras_recarga"]) });
+    contexto.esperarBotonPorTexto = async () => { throw new Error("No se confirmó la creación"); };
+    assert.equal(pantallas.size, 1);
+    intervalos[0]();
+    await new Promise(setImmediate);
+    assert.equal(pantallas.size, 0, "El error real de Mi Tienda vuelve a ser visible.");
+    assert.equal(errores.length, 1);
+    assert.match(errores[0][1].message, /No se confirmó la creación/);
     assert.equal((await enviar(imagenesManuales)).ok, true);
     assert.equal(operaciones.some(([accion]) => accion === "asociar"), false);
   });

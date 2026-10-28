@@ -82,11 +82,18 @@ const TEXTO_BOTON_ASOCIAR_PRODUCTOS = "Asociar productos";
   // nunca pulsa "Asociar productos".
   subidaEnCurso = true;
   sessionStorage.removeItem(CLAVE_REINTENTO_404);
+  let progreso;
   try {
+    progreso = mostrarProgresoCargaImagenes();
+    progreso.actualizar(
+      "Preparando la creación de productos",
+      "Mi Tienda se actualizó. Espera mientras Rappi termina de crear los productos."
+    );
     await continuarYCcrearProductos();
   } catch (err) {
     console.error("No se pudo continuar la creación de productos tras la recarga:", err);
   } finally {
+    progreso?.quitar();
     subidaEnCurso = false;
   }
 })();
@@ -392,54 +399,72 @@ async function subirImagenes(
   };
 }
 
-function mostrarProgresoCargaImagenes() {
+// El fondo opaco cubre toda la pestaña, incluida la brújula y el mensaje
+// de la vista 404 de Rappi. No modifica el contenido ni oculta un error
+// definitivo: la pantalla se retira al terminar, fallar o agotar el reintento.
+function crearPantallaProgreso(tituloInicial, detalleInicial) {
   const overlay = document.createElement("div");
+  overlay.setAttribute("data-panafargo-progreso", "");
+  overlay.setAttribute("role", "status");
+  overlay.setAttribute("aria-live", "polite");
   Object.assign(overlay.style, {
     position: "fixed",
     inset: "0",
     zIndex: "2147483647",
     display: "grid",
     placeItems: "center",
-    padding: "20px",
-    background: "rgba(15, 23, 42, 0.28)",
-    pointerEvents: "none",
+    boxSizing: "border-box",
+    padding: "clamp(16px, 4vw, 48px)",
+    overflow: "auto",
+    background: "#f4f6fa",
+    pointerEvents: "auto",
   });
 
   const tarjeta = document.createElement("div");
   Object.assign(tarjeta.style, {
-    width: "min(520px, calc(100vw - 40px))",
-    padding: "24px",
+    boxSizing: "border-box",
+    width: "min(780px, 100%)",
+    minWidth: "0",
+    minHeight: "320px",
+    padding: "clamp(24px, 5vw, 56px)",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
     border: "1px solid #d8dee8",
-    borderRadius: "10px",
+    borderRadius: "18px",
     background: "#fff",
-    boxShadow: "0 8px 28px rgba(0, 0, 0, 0.25)",
+    boxShadow: "0 16px 48px rgba(15, 23, 42, 0.14)",
     color: "#222",
-    font: "16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    font: "18px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     textAlign: "center",
   });
 
   const titulo = document.createElement("div");
-  titulo.textContent = "Cargando imágenes para crear productos";
-  titulo.style.fontWeight = "600";
+  titulo.textContent = tituloInicial;
+  Object.assign(titulo.style, {
+    fontSize: "clamp(22px, 3vw, 28px)",
+    lineHeight: "1.3",
+    fontWeight: "600",
+    overflowWrap: "anywhere",
+  });
 
   const detalle = document.createElement("div");
-  detalle.textContent = "Rappi está procesando las imágenes. Esta operación puede tardar varios minutos.";
-  detalle.style.margin = "6px 0 18px";
+  detalle.textContent = detalleInicial;
+  detalle.style.margin = "16px 0 28px";
 
   const pista = document.createElement("div");
   Object.assign(pista.style, {
-    height: "20px",
+    height: "30px",
+    flexShrink: "0",
     overflow: "hidden",
     borderRadius: "999px",
     background: "#e5e7eb",
   });
   pista.setAttribute("role", "progressbar");
-  pista.setAttribute("aria-label", "Rappi está procesando las imágenes");
-  pista.setAttribute("aria-valuetext", "Procesando imágenes");
 
   const progreso = document.createElement("div");
   Object.assign(progreso.style, {
-    width: "38%",
+    width: "0%",
     height: "100%",
     borderRadius: "inherit",
     background: "#2c7be5",
@@ -449,6 +474,17 @@ function mostrarProgresoCargaImagenes() {
   overlay.appendChild(tarjeta);
   document.body.appendChild(overlay);
 
+  return { overlay, titulo, detalle, pista, progreso };
+}
+
+function mostrarProgresoCargaImagenes() {
+  const { overlay, titulo, detalle, pista, progreso } = crearPantallaProgreso(
+    "Cargando imágenes para crear productos",
+    "Rappi está procesando las imágenes. Esta operación puede tardar varios minutos."
+  );
+  pista.setAttribute("aria-label", "Rappi está procesando las imágenes");
+  pista.setAttribute("aria-valuetext", "Procesando imágenes");
+  progreso.style.width = "38%";
   const animacion = progreso.animate(
     [{ transform: "translateX(-110%)" }, { transform: "translateX(270%)" }],
     { duration: 1300, iterations: Infinity, easing: "ease-in-out" }
@@ -458,6 +494,8 @@ function mostrarProgresoCargaImagenes() {
     actualizar(nuevoTitulo, nuevoDetalle) {
       titulo.textContent = nuevoTitulo;
       detalle.textContent = nuevoDetalle;
+      pista.setAttribute("aria-label", nuevoTitulo);
+      pista.setAttribute("aria-valuetext", nuevoDetalle);
     },
     quitar() {
       animacion.cancel();
@@ -467,57 +505,18 @@ function mostrarProgresoCargaImagenes() {
 }
 
 function mostrarProgresoEsperaRecarga() {
-  const contenedor = document.createElement("div");
-  contenedor.setAttribute("role", "status");
-  contenedor.setAttribute("aria-live", "polite");
-  Object.assign(contenedor.style, {
-    position: "fixed",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    zIndex: "2147483647",
-    width: "min(520px, calc(100vw - 32px))",
-    padding: "24px",
-    border: "1px solid #d8dee8",
-    borderRadius: "10px",
-    background: "#fff",
-    boxShadow: "0 8px 28px rgba(0, 0, 0, 0.25)",
-    color: "#222",
-    font: "16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  });
-
-  const titulo = document.createElement("div");
-  titulo.textContent = "Preparando la creación de productos";
-  titulo.style.fontWeight = "600";
-
-  const detalle = document.createElement("div");
-  detalle.textContent = "Espera mientras Mi Tienda se actualiza.";
-  detalle.style.margin = "4px 0 12px";
-
-  const pista = document.createElement("div");
-  Object.assign(pista.style, {
-    height: "20px",
-    overflow: "hidden",
-    borderRadius: "999px",
-    background: "#e5e7eb",
-  });
-  pista.setAttribute("role", "progressbar");
-  pista.setAttribute("aria-label", "Espera para continuar con la creación");
+  clearInterval(intervaloProgresoReintento404);
+  barraProgresoReintento404?.remove();
+  const { overlay, pista, progreso } = crearPantallaProgreso(
+    "Preparando la creación de productos",
+    "Espera mientras Rappi procesa las imágenes. Mi Tienda se actualizará automáticamente al terminar esta espera."
+  );
+  pista.setAttribute("aria-label", "Tiempo de espera antes de actualizar Mi Tienda");
   pista.setAttribute("aria-valuemin", "0");
   pista.setAttribute("aria-valuemax", "100");
 
-  const progreso = document.createElement("div");
-  Object.assign(progreso.style, {
-    width: "0%",
-    height: "100%",
-    borderRadius: "inherit",
-    background: "#2c7be5",
-    transition: "width 250ms linear",
-  });
-  pista.appendChild(progreso);
-  contenedor.append(titulo, detalle, pista);
-  document.body.appendChild(contenedor);
-  barraProgresoReintento404 = contenedor;
+  progreso.style.transition = "width 250ms linear";
+  barraProgresoReintento404 = overlay;
 
   const inicio = Date.now();
   const actualizarProgreso = () => {

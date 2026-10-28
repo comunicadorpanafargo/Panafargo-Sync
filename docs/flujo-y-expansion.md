@@ -10,6 +10,33 @@ Se eliminaron clics y descargas obligatorios: no hay validación individual sepa
 
 Las capturas aportadas se revisaron. El MP4 y el ZIP de la grabación superaron el límite de transferencia de32MiB y no pudieron inspeccionarse; no se atribuyen observaciones adicionales al video.
 
+## Botones necesarios y acciones secundarias
+
+El camino principal de la extensión es **Buscar y validar → Preparar en Mi Tienda → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, la preparación se detiene en la revisión para asignar imágenes manualmente antes de continuar en el portal.
+
+| Control actual | Utilidad | Decisión recomendada |
+| --- | --- | --- |
+| **Buscar y validar** | Esencial: consulta Shopify y revisa cada publicación. | Mantener como acción principal del paso 1. |
+| **Continuar a Rappi** y pestañas de pasos | Navegación, sin una nueva consulta ni publicación por sí misma. | Conservar un avance claro y la posibilidad de volver. «Continuar» puede retirarse si el acceso al paso 2 sigue siendo evidente; no eliminar la navegación de recuperación. |
+| **Preparar en Mi Tienda** | Acción principal del camino con la pestaña de Rappi: genera y entrega los archivos que corresponden. | Mantener. No necesita pulsar antes «Descargar lote e imágenes». |
+| **Seleccionar todas** y casillas por publicación | Permiten excluir y volver a incluir SKU completos sin borrar datos ni repetir la consulta. | Mantener; reemplazan la antigua X para quitar productos. |
+| **Seleccionar plantilla (.xlsx)** | Esencial para usar el archivo de asociación del lote real. | Mantener el selector. El guardado tras validar ya es automático. |
+| **Descargar precios y existencias** | Esencial en la asociación actual: produce el archivo completado que se sube y revisa en Rappi. | Mantener. Es el antiguo «Descargar plantilla generada» con un nombre que explica su resultado. |
+| **Descargar lote e imágenes** | Alternativa manual y recuperación si la preparación del portal falla. | Conservar como acción secundaria u opción plegada; no exigirla en la vía principal. No es inútil aunque comparta generación de archivos con «Preparar». |
+| **Descargar reporte CSV** | Registro de resultados y diagnóstico; no crea ni asocia productos. | Opcional. Puede ir en opciones secundarias, sin convertir la descarga en requisito. |
+| **Reintentar pendientes** | Recuperación de consultas fallidas o publicaciones corregidas en Shopify. | Mantener y mostrar o habilitar solo cuando existan pendientes; no obligar a repetir todo el lote. |
+| **Nuevo lote** | Reinicia explícitamente la selección y revisión locales. | Mantener como acción secundaria, separada del envío al portal. |
+
+Los controles redundantes de las capturas antiguas ya no forman parte de la interfaz actual:
+
+- **Cargar productos validados:** la preparación se actualiza al terminar la búsqueda y al entrar en los pasos siguientes.
+- **Guardar plantilla:** se sustituyó por validación y guardado al seleccionar el archivo.
+- **Validar individualmente**, **Buscar un SKU** y **Descargar imagen individual** como recorridos separados: el lote atiende también una sola referencia, sin repetir pantallas ni descargas por producto.
+- **X para quitar:** se sustituyó por desmarcar la publicación; se conserva la posibilidad de recuperarla en el mismo lote.
+- **Subir una plantilla de asociación sin completar:** no sustituye la generación de precios y existencias ni la revisión final del usuario.
+
+Plegar descargas opcionales o condicionar la visibilidad de los reintentos es una recomendación de presentación; no debe confundirse con eliminar esas capacidades. El inventario anterior se basa en el código del checkout y su flujo local. No demuestra que se haya ejecutado una creación o asociación en el portal real de Rappi.
+
 ## Código depurado
 
 - Pantalla individual sin acceso desde la navegación y sus listeners.

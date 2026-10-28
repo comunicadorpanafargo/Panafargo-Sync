@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1
+# Panafargo Sync 4.1.1
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -42,6 +42,7 @@ Las publicaciones listas se seleccionan automáticamente y las elecciones se con
 - **Preparar en Mi Tienda:** encuentra o abre la pestaña de Rappi. Debes tener tu sesión iniciada. Para SKU compatibles con el ZIP automático, carga la plantilla y las imágenes y continúa con la creación, sin confirmar la asociación final.
 - Si Mi Tienda ya está revisando imágenes de un lote anterior, la extensión se detiene. No aplica un ZIP nuevo sobre una plantilla que podría pertenecer a otro lote.
 - No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
+- Durante el procesamiento y la creación, una pantalla de espera opaca cubre la pestaña completa. Si aparece el fallo temporal de «página no encontrada», muestra la espera antes de la actualización automática. Esa barra representa el tiempo de espera, no una confirmación de productos creados; si falla la recuperación, se retira para permitir revisar el error.
 
 ### Imágenes de SKU con `/`
 
@@ -53,7 +54,9 @@ La preparación puede cargar el Excel y llegar a la revisión de imágenes, dond
 
 ### 3. Asociar
 
-Selecciona la plantilla `.xlsx` que Rappi envía para el lote; se valida y guarda automáticamente. **Descargar precios y existencias** completa únicamente las filas seleccionadas, encontrándolas por SKU completo en la columna G con el prefijo `PANAFARGOSAS_`.
+Selecciona la plantilla `.xlsx` que Rappi envía para el lote; se valida y guarda automáticamente, sin un botón Guardar. Una nueva plantilla válida reemplaza la anterior, incluidos su archivo y nombre. Si no es válida, se conserva la plantilla actual. El nombre vigente aparece en pantalla y se recupera al volver a abrir la extensión. También puedes volver a seleccionar un archivo actualizado que conserve el mismo nombre.
+
+**Descargar precios y existencias** completa únicamente las filas seleccionadas, encontrándolas por SKU completo en la columna G con el prefijo `PANAFARGOSAS_`.
 
 - K: precio calculado.
 - N: unidades disponibles después de la reserva.

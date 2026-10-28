@@ -65,10 +65,10 @@
     <section id="tab-asociacion" class="tab-panel" aria-labelledby="titulo-plantilla-asociacion">
       <section class="panel" id="seccion-plantilla-asociacion">
         <p class="eyebrow">PASO 3</p><h2 id="titulo-plantilla-asociacion">Completa precios y existencias</h2>
-        <ol class="instructions"><li>Crea los productos en Mi Tienda y espera la plantilla de asociación de Rappi.</li><li>Selecciona ese archivo aquí. Se guardará automáticamente.</li><li>Descarga el archivo completado y súbelo en Mi Tienda. Revisa y confirma la asociación allí.</li></ol>
-        <label for="input-plantilla-asociacion">Plantilla enviada por Rappi (.xlsx)</label>
+        <ol class="instructions"><li>Crea los productos en Mi Tienda y espera la plantilla de asociación de Rappi.</li><li>Selecciona ese archivo aquí. Se valida y guarda automáticamente, reemplazando la plantilla anterior. Si el archivo no es válido, se conserva la plantilla actual.</li><li>Descarga el archivo completado y súbelo en Mi Tienda. Revisa y confirma la asociación allí.</li></ol>
+        <label for="input-plantilla-asociacion">Seleccionar o reemplazar plantilla de Rappi (.xlsx)</label>
         <input type="file" id="input-plantilla-asociacion" accept=".xlsx" />
-        <p id="plantilla-actual" class="ayuda">Selecciona la plantilla de tu lote.</p>
+        <p id="plantilla-actual" class="ayuda">Plantilla actual: comprobando archivo guardado…</p>
         <p id="mensaje-plantilla-asociacion" class="mensaje" role="status"></p>
         <button id="btn-descargar-plantilla-asociacion-generada" type="button" disabled>Descargar precios y existencias</button>
         <p id="mensaje-plantilla-asociacion-generada" class="mensaje" role="status" aria-live="polite"></p>
