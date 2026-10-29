@@ -13,6 +13,7 @@
 // ============================================================
 
 import { nombreArchivoImagenLocal } from "../images/image-handler.js";
+import { analizarSku } from "../utils/sku.js";
 
 export class ErrorImagenesRappi extends Error {
   constructor(code, mensaje, skus = []) {
@@ -29,6 +30,7 @@ export class ErrorImagenesRappi extends Error {
  */
 const LIMITE_BYTES_IMAGEN = 1_000_000; // 1 MB — límite máximo por imagen exigido por Rappi.
 const FORMATOS_PERMITIDOS = new Set(["jpg", "jpeg", "png", "webp"]); // Rappi no acepta GIF.
+const FORMATOS_INDIVIDUALES = new Set(["jpg", "jpeg", "png"]); // Formatos documentados para el control individual.
 
 export async function construirZipImagenes(filasListas) {
   validarNombresParaCargaMasiva(filasListas);
@@ -79,6 +81,53 @@ export async function construirZipImagenes(filasListas) {
 }
 
 /**
+ * Prepara la foto principal de CADA publicación para un control individual.
+ * El consumidor debe localizar una fila por SKU completo y asignar el File a
+ * esa fila. El nombre seguro no es un alias de SKU ni una regla de importación
+ * del ZIP; no se confía en que Rappi decodifique sus caracteres.
+ * @returns {Promise<Array<{sku:string,nombre:string,tipoMime:string,base64:string}>>}
+ */
+export async function prepararImagenesIndividualesPorSku(filasListas) {
+  if (!Array.isArray(filasListas) || filasListas.length === 0) {
+    throw new ErrorImagenesRappi("LOTE_IMAGENES_VACIO", "Selecciona las publicaciones cuyas imágenes quieres preparar.");
+  }
+  const vistos = new Set();
+  for (const fila of filasListas) {
+    const producto = fila?.producto;
+    const sku = producto?.sku;
+    try {
+      if (analizarSku(sku).skuCompleto !== sku) throw new Error("El SKU no debe incluir espacios en sus extremos.");
+    } catch (error) {
+      throw new ErrorImagenesRappi("SKU_IMAGEN_INVALIDO", `No se puede preparar una imagen sin un SKU completo válido. ${error.message}`, [sku]);
+    }
+    if (vistos.has(sku)) {
+      throw new ErrorImagenesRappi("SKU_IMAGEN_DUPLICADO", `El SKU completo ${sku} está repetido. No se puede elegir una imagen para dos publicaciones con la misma identidad.`, [sku]);
+    }
+    vistos.add(sku);
+    if (typeof producto.imagen_principal !== "string" || !producto.imagen_principal) {
+      throw new ErrorImagenesRappi("IMAGEN_PRINCIPAL_AUSENTE", `SKU ${sku} no tiene imagen principal. Revisa la foto de esa publicación en Shopify.`, [sku]);
+    }
+  }
+
+  const imagenes = [];
+  for (const { producto } of filasListas) {
+    const imagen = await descargarImagenPrincipalNormalizada(producto, FORMATOS_INDIVIDUALES);
+    const tipoMime = imagen.extension === ".png" ? "image/png" : "image/jpeg";
+    let binario = "";
+    for (let inicio = 0; inicio < imagen.bytes.length; inicio += 32768) {
+      binario += String.fromCharCode(...imagen.bytes.subarray(inicio, inicio + 32768));
+    }
+    imagenes.push({
+      sku: producto.sku,
+      nombre: nombreArchivoImagenLocal(producto.sku, imagen.extension),
+      tipoMime,
+      base64: btoa(binario),
+    });
+  }
+  return imagenes;
+}
+
+/**
  * Respaldo LOCAL para asignar imágenes manualmente por SKU completo. Solo
  * contiene la imagen principal por publicación y un mapa de nombres; NO es
  * un ZIP importable de Rappi. El portal no ha confirmado cómo relaciona
@@ -104,19 +153,7 @@ export async function construirPaqueteImagenesLocales(filasListas) {
   const zip = new window.JSZip();
   const mapa = [];
   for (const { producto } of filasListas) {
-    if (!producto.imagen_principal) {
-      throw new Error(`SKU ${producto.sku} no tiene imagen principal para la asignación manual.`);
-    }
-    const respuesta = await fetch(producto.imagen_principal);
-    if (!respuesta.ok) {
-      throw new Error(`No se pudo descargar la imagen de SKU ${producto.sku} (HTTP ${respuesta.status}).`);
-    }
-    const bytes = await respuesta.arrayBuffer();
-    if (bytes.byteLength === 0) {
-      throw new Error(`La imagen del SKU ${producto.sku} llegó vacía desde Shopify.`);
-    }
-    const tipoMime = (respuesta.headers.get("content-type") || "").split(";", 1)[0].toLowerCase();
-    const imagen = await normalizarImagen(bytes, tipoMime, producto.sku);
+    const imagen = await descargarImagenPrincipalNormalizada(producto);
     const archivo = nombreArchivoImagenLocal(producto.sku, imagen.extension);
     zip.file(archivo, imagen.bytes);
     mapa.push({ sku: producto.sku, archivo });
@@ -135,6 +172,7 @@ export async function construirPaqueteImagenesLocales(filasListas) {
   zip.file("LEEME.txt", [
     "PAQUETE LOCAL PARA ASIGNACION MANUAL DE IMAGENES",
     "Este archivo NO es el ZIP de carga masiva de Rappi.",
+    "No subas este ZIP en Cárgalas aquí: ese importador no tiene una vinculación confirmada para los nombres codificados.",
     "Extrae los archivos y asigna cada imagen al SKU completo indicado en el mapa.",
     "Los nombres codificados evitan que / y otros caracteres se conviertan en rutas.",
     "El SKU original se conserva exactamente en mapa_imagenes.json.",
@@ -186,6 +224,22 @@ function celdaCsvTexto(valor) {
   return `"${texto.replace(/"/g, '""')}"`;
 }
 
+async function descargarImagenPrincipalNormalizada(producto, formatosPermitidos = FORMATOS_PERMITIDOS) {
+  if (!producto.imagen_principal) {
+    throw new Error(`SKU ${producto.sku} no tiene imagen principal para preparar.`);
+  }
+  const respuesta = await fetch(producto.imagen_principal);
+  if (!respuesta.ok) {
+    throw new Error(`No se pudo descargar la imagen de SKU ${producto.sku} (HTTP ${respuesta.status}).`);
+  }
+  const bytes = await respuesta.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error(`La imagen del SKU ${producto.sku} llegó vacía desde Shopify.`);
+  }
+  const tipoMime = (respuesta.headers.get("content-type") || "").split(";", 1)[0].toLowerCase();
+  return normalizarImagen(bytes, tipoMime, producto.sku, formatosPermitidos);
+}
+
 /**
  * Deja la imagen lista para Rappi: si ya viene en un formato permitido
  * (jpg/jpeg/png/webp) y pesa 1 MB o menos, se usa tal cual. Si no, se
@@ -193,9 +247,9 @@ function celdaCsvTexto(valor) {
  * hasta quedar bajo el límite de 1 MB. Si agota los intentos sin cumplir
  * el límite, detiene el lote para no enviar una imagen que Rappi rechace.
  */
-async function normalizarImagen(bytes, tipoMime, sku) {
+async function normalizarImagen(bytes, tipoMime, sku, formatosPermitidos = FORMATOS_PERMITIDOS) {
   const extensionOriginal = detectarExtensionImagen(bytes, tipoMime, sku).slice(1);
-  const formatoValido = FORMATOS_PERMITIDOS.has(extensionOriginal);
+  const formatoValido = formatosPermitidos.has(extensionOriginal);
   const demasiadoGrande = bytes.byteLength > LIMITE_BYTES_IMAGEN;
 
   if (formatoValido && !demasiadoGrande) {

@@ -12,6 +12,9 @@ a{color:#145d8b;text-underline-offset:3px}
 code{font-family:ui-monospace,Consolas,monospace}
 .app-header{display:flex;align-items:center;gap:11px;padding:17px 24px;background:var(--surface);border-bottom:1px solid var(--line)}
 .app-header h1{font-size:19px;line-height:1.2;margin:0}
+.app-version{display:inline-block;font-size:10px;font-weight:500;color:var(--muted);vertical-align:middle;white-space:nowrap}
+.rappi-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.rappi-heading>button{white-space:nowrap}
 .app-header p{font-size:12px;color:var(--muted);margin:3px 0 0}
 .app-header>button{margin-left:auto;white-space:nowrap}
 .tabs{display:flex;gap:8px;padding:10px 24px;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}

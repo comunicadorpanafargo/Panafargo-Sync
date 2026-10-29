@@ -41,6 +41,16 @@ export async function limpiarProductosProcesados() {
   await chrome.storage.local.remove([KEY_PRODUCTOS, KEY_MATRIZ_V11, KEY_LOTE_UI, "panafargo_seleccion_rappi"]);
 }
 
+/** Reinicia solo la preparación local de Rappi, conservando los datos fuente. */
+export async function limpiarPreparacionRappi() {
+  await chrome.storage.local.remove([
+    "panafargo_seleccion_rappi",
+    "plantillaAsociacionBase64",
+    "plantillaAsociacionNombre",
+    "plantillaAsociacionFecha",
+  ]);
+}
+
 // ---------------- V2 — Equivalencias Rappi (reutilizables) ----------------
 
 /**

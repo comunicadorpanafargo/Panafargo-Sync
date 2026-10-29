@@ -8,6 +8,8 @@ import { guardarProductos, obtenerProductos, limpiarProductosProcesados } from "
 import { initRappiTab, cargarProductosValidados } from "./rappi-ui.js";
 
 const $ = (id) => document.getElementById(id);
+const version = chrome.runtime.getManifest?.().version;
+if (version) $("version-extension").textContent = `v${version}`;
 const input = $("lote-input");
 let productos = [];
 let contexto = { entrada: "", solicitados: [], errores: [] };

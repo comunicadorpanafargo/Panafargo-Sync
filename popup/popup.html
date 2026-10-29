@@ -9,7 +9,7 @@
 <body>
   <header class="app-header">
     <img src="../icons/icon48.png" width="36" height="36" alt="" />
-    <div><h1>Panafargo Sync</h1><p>De Shopify a Rappi, paso a paso</p></div>
+    <div><h1>Panafargo Sync <span id="version-extension" class="app-version"></span></h1><p>De Shopify a Rappi, paso a paso</p></div>
     <button id="btn-nuevo-lote" class="button-quiet" type="button">Nuevo lote</button>
   </header>
   <nav class="tabs" aria-label="Pasos de preparación">
@@ -48,10 +48,13 @@
 
     <section id="tab-rappi" class="tab-panel" aria-labelledby="titulo-rappi">
       <section class="panel">
-        <p class="eyebrow">PASO 2</p><h2 id="titulo-rappi">Revisa el lote antes de subir</h2>
+        <div class="section-heading rappi-heading">
+          <div><p class="eyebrow">PASO 2</p><h2 id="titulo-rappi">Revisa el lote antes de subir</h2></div>
+          <button id="btn-refrescar-rappi" class="button-secondary" type="button" title="Limpia la preparación de Rappi y vuelve a cargar el lote consultado en Shopify.">↻ Reiniciar Rappi</button>
+        </div>
         <p class="ayuda">Las publicaciones listas se seleccionan automáticamente. Puedes quitar cualquiera. Verás las existencias de Shopify y la cantidad que se reservará para Rappi.</p>
         <div class="selection-bar"><label class="seleccionar-todos"><input id="seleccionar-todos-rappi" type="checkbox" /> Seleccionar todas las listas</label><span id="seleccion-rappi" aria-live="polite">0 seleccionadas</span></div>
-        <p id="aviso-imagenes-disenos" class="notice" hidden>Este lote contiene SKU con «/». Se conserva el código completo en la plantilla. Las imágenes se descargarán con una guía para asignarlas por publicación en Mi Tienda; el ZIP automático no tiene verificada esa coincidencia.</p>
+        <p id="aviso-imagenes-disenos" class="notice" hidden>Este lote contiene SKU con «/». Se conserva el código completo y las imágenes se asignan a la fila de cada publicación en Mi Tienda.</p>
         <div class="footer-actions rappi-actions">
           <button id="btn-subir-mi-tienda" type="button" disabled>Preparar en Mi Tienda</button>
           <button id="btn-generar-lote-rappi" class="button-secondary" type="button" disabled>Descargar lote e imágenes</button>

@@ -12,7 +12,7 @@ Las capturas aportadas se revisaron. El MP4 y el ZIP de la grabación superaron 
 
 ## Botones necesarios y acciones secundarias
 
-El camino principal de la extensión es **Buscar y validar → Preparar en Mi Tienda → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, la preparación se detiene en la revisión para asignar imágenes manualmente antes de continuar en el portal.
+El camino principal de la extensión es **Buscar y validar → Preparar en Mi Tienda → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, las imágenes se asignan automáticamente a sus filas por el SKU completo, usando el control individual confirmado en el frontend público de Rappi.
 
 | Control actual | Utilidad | Decisión recomendada |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ El camino principal de la extensión es **Buscar y validar → Preparar en Mi Ti
 | **Descargar reporte CSV** | Registro de resultados y diagnóstico; no crea ni asocia productos. | Opcional. Puede ir en opciones secundarias, sin convertir la descarga en requisito. |
 | **Reintentar pendientes** | Recuperación de consultas fallidas o publicaciones corregidas en Shopify. | Mantener y mostrar o habilitar solo cuando existan pendientes; no obligar a repetir todo el lote. |
 | **Nuevo lote** | Reinicia explícitamente la selección y revisión locales. | Mantener como acción secundaria, separada del envío al portal. |
+| **Reiniciar Rappi** | Limpia solo la selección, mensajes y plantilla de Rappi y relee el lote fuente guardado. | Mantener arriba del paso 2; conserva Shopify y bloquea el borrado durante operaciones activas. |
 
 Los controles redundantes de las capturas antiguas ya no forman parte de la interfaz actual:
 
@@ -49,13 +50,13 @@ Se mantiene un único cálculo de precio, la reserva existente y las plantillas 
 
 ## Límites que deben verificarse en Rappi
 
-El SKU con `/` se conserva en Excel y en la asociación, pero el formato de vinculación de imágenes de Rappi no está confirmado para estos identificadores. Codificar el nombre local no demuestra compatibilidad del importador. El lote se detiene en revisión antes de crear productos y ofrece las imágenes y su mapa para asignarlas manualmente.
+El SKU con `/` se conserva en Excel y en la asociación. El algoritmo privado que vincula nombres de ZIP no está confirmado para estos identificadores; codificar el nombre local no demuestra compatibilidad del importador. La versión 4.1.2 usa el control de imagen de cada fila, cuya identidad interna se confirmó en el frontend público de Rappi. Comprueba todos los SKU de todas las páginas antes de adjuntar imágenes y confirma la imagen nueva antes de crear. El respaldo ZIP sigue siendo exclusivamente local. Las fuentes y límites están en [rappi-imagenes-por-sku.md](rappi-imagenes-por-sku.md).
 
 No se reanuda una revisión antigua con imágenes de un lote nuevo. Se rechazan cargas simultáneas o durante el reintento activo de Rappi. Se conserva la confirmación final de asociación en el portal.
 
 ## Próximas mejoras por prioridad
 
-1. **Verificar imágenes por diseño en el portal real.** Con un lote pequeño y una grabación accesible o DOM confirmado, documentar cómo Rappi identifica cada archivo y automatizar esa asignación sin modificar el SKU. Este es el bloqueo concreto para completar el camino automático de `/`.
+1. **Comprobar el recorrido por diseño en una cuenta real.** La automatización por fila está implementada y probada con un DOM derivado del frontend público. Queda verificarla con una sesión autorizada y un lote pequeño revisado, además de mantener los selectores si Rappi cambia la interfaz. No confundir estos ensayos locales con publicaciones reales ya realizadas.
 2. **Historial de trabajos y prevención de reenvíos.** Identificador de lote, estado por publicación y comprobación del resultado antes de permitir repetir una creación. Requiere una señal fiable del portal; una descarga o un botón pulsado no prueba publicación.
 3. **Reintentos por fallos recuperables.** Reintentar imágenes o consultas fallidas con límites, evitando repetir creaciones ya confirmadas. Mostrar fase y pendientes, con cancelación segura antes de enviar.
 4. **Importación de inventario con reglas explícitas.** Si se incorpora Webcol, solo actualizar referencias base autorizadas. Una fila base nunca debe sobrescribir el conteo manual de un SKU con `/`; cualquier actualización de Shopify debe ser una operación separada y revisable.

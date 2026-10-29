@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1.1
+# Panafargo Sync 4.1.2
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -26,6 +26,8 @@ Solo el texto anterior a la primera `/` se usa para comparar y contar productos 
 3. En Chrome, abre `chrome://extensions`, activa el modo desarrollador y carga esta carpeta como extensión descomprimida.
 4. Abre Panafargo Sync desde su icono. Las bibliotecas de Excel y ZIP ya están incluidas; la extensión no necesita una instalación con npm.
 
+Al actualizar desde 4.0.0, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera de la ventana permite comprobar la versión instalada. La carga por SKU comprueba que la pestaña tenga activo el código nuevo antes de enviar el lote.
+
 ## Flujo para el usuario
 
 ### 1. Revisar productos
@@ -39,18 +41,21 @@ El resumen distingue productos base, publicaciones, listas y pendientes. Una bas
 Las publicaciones listas se seleccionan automáticamente y las elecciones se conservan por SKU completo. Puedes desmarcar las que no quieres incluir. Los bloqueos siguen visibles y no pueden seleccionarse.
 
 - **Descargar lote e imágenes:** genera un Excel de creación y un solo paquete de imágenes.
-- **Preparar en Mi Tienda:** encuentra o abre la pestaña de Rappi. Debes tener tu sesión iniciada. Para SKU compatibles con el ZIP automático, carga la plantilla y las imágenes y continúa con la creación, sin confirmar la asociación final.
+- **Preparar en Mi Tienda:** encuentra o abre la pestaña de Rappi. Debes tener tu sesión iniciada. Los lotes sin separadores conservan el ZIP automático; si hay SKU con `/`, las imágenes del lote se asignan automáticamente a sus filas por SKU completo. Solo después de confirmar las imágenes se continúa con la creación, sin confirmar la asociación final.
 - Si Mi Tienda ya está revisando imágenes de un lote anterior, la extensión se detiene. No aplica un ZIP nuevo sobre una plantilla que podría pertenecer a otro lote.
 - No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
 - Durante el procesamiento y la creación, una pantalla de espera opaca cubre la pestaña completa. Si aparece el fallo temporal de «página no encontrada», muestra la espera antes de la actualización automática. Esa barra representa el tiempo de espera, no una confirmación de productos creados; si falla la recuperación, se retira para permitir revisar el error.
+- **Reiniciar Rappi**, arriba del paso 2, borra selección, mensajes y la plantilla de asociación guardada, y vuelve a leer el lote fuente actual con todas las publicaciones desmarcadas. Conserva productos, conteos, contexto de búsqueda, equivalencias y credenciales de Shopify. No recarga ni modifica Mi Tienda. Si hay una operación activa o la pestaña no confirma su estado, conserva la preparación anterior.
 
 ### Imágenes de SKU con `/`
 
-El Excel conserva `11351/MoveForward` tal cual. En cambio, `/` es un separador de carpetas dentro de un ZIP. **No está verificado que Rappi asocie un archivo codificado o una ruta de ZIP con ese SKU completo.** No se sustituye la barra en los datos de Rappi ni se inventa esa compatibilidad.
+El Excel conserva `11351/MoveForward` tal cual. En cambio, `/` es un separador de carpetas dentro de un ZIP: `34534/hola.jpg` tiene como nombre final `hola.jpg`. **No se inventa que Rappi decodifique un nombre alternativo.**
 
-Para estos lotes se descarga un paquete **local para asignación manual** con la imagen principal de cada publicación, nombres planos seguros, `mapa_imagenes.csv`, un mapa JSON exacto y un archivo de instrucciones. No es un ZIP de importación automática de Rappi.
+El frontend público de Mi Tienda permite adjuntar una imagen directamente a una fila, usando sus identificadores internos de producto y archivo. La extensión utiliza ese control para los lotes con `/`: primero recorre todas las páginas y comprueba que cada SKU completo aparezca exactamente una vez; después asigna la imagen principal de cada publicación en una segunda pasada. Comprueba una URL de imagen nueva y cargada y la ausencia del indicador de procesamiento. No usa el nombre del archivo para decidir a qué producto pertenece.
 
-La preparación puede cargar el Excel y llegar a la revisión de imágenes, donde se detiene sin pulsar **Crear productos** ni **Asociar productos**. Asigna las imágenes a sus publicaciones y continúa en Mi Tienda. Automatizar esa asignación requiere verificar el formulario o el contrato real de nombres de Rappi. Las validaciones locales no demuestran que el portal haya aceptado o publicado los productos.
+Si falta un SKU, hay duplicados, cambian las filas, falla una imagen o no se puede confirmar su carga, no pulsa **Crear productos**. La cabecera muestra cuántas imágenes se han confirmado. La foto de cada diseño procede de su publicación de Shopify; no se suman ni comparten existencias. WebP se recodifica a JPEG para este recorrido; los adjuntos son JPG/PNG de hasta 1 MB.
+
+**Descargar lote y respaldo de imágenes** sigue disponible como alternativa local, con nombres seguros y mapas CSV/JSON que conservan el SKU completo. **No subas ese ZIP de respaldo mediante «Cárgalas aquí».** Extráelo si necesitas cargar imágenes individualmente. Las fuentes del contrato, los selectores y los límites de comprobación están en [docs/rappi-imagenes-por-sku.md](docs/rappi-imagenes-por-sku.md). Las pruebas locales y el código público no demuestran que una cuenta privada haya publicado productos.
 
 ### 3. Asociar
 
@@ -63,6 +68,7 @@ Selecciona la plantilla `.xlsx` que Rappi envía para el lote; se valida y guard
 - Los identificadores, descripciones, descuento y disponibilidad de las filas seleccionadas se conservan.
 - Las filas ajenas al lote se eliminan del archivo generado para evitar actualizar otros productos.
 - No se sustituye un diseño ausente por su base. Se informa cada SKU completo que no tenga fila en la plantilla.
+- Los espacios exteriores del Excel se ignoran al buscar, conservando las celdas e identificadores originales. Los SKU duplicados se rechazan. Una plantilla guardada dañada no se cambia silenciosamente por otra con identificadores distintos.
 
 Sube el archivo generado en Mi Tienda, revísalo y confirma allí la asociación. La extensión no pulsa ese botón final ni recibe tu contraseña de Rappi.
 

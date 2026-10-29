@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Panafargo Sync",
-  "version": "4.1.1",
+  "version": "4.1.2",
   "description": "Busca productos y diseños de Shopify por SKU, revisa existencias y prepara su creación y asociación en Rappi.",
   "action": {
     "default_title": "Panafargo Sync"
@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://mitienda.rappi.com.co/*"],
-      "js": ["vendor/xlsx.full.min.js", "rappi/mi-tienda-content-script.js"],
+      "js": ["vendor/xlsx.full.min.js", "rappi/mi-tienda-imagenes.js", "rappi/mi-tienda-content-script.js"],
       "run_at": "document_idle"
     }
   ],

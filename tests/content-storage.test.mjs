@@ -151,8 +151,100 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
 
 const plantilla = { xlsxBase64: "AA==", xlsxNombre: "lote-prueba.xlsx" };
 const imagenesManuales = { ...plantilla, imagenesManualesPorSku: true, skus: ["2247/1", "2247/3"] };
+const imagenesPorFila = {
+  ...plantilla,
+  skus: ["34534/hola", "67890/hola"],
+  imagenesPorSku: [
+    { sku: "34534/hola", nombre: "34534%2Fhola.png", tipoMime: "image/png", base64: "AA==" },
+    { sku: "67890/hola", nombre: "67890%2Fhola.png", tipoMime: "image/png", base64: "AA==" },
+  ],
+};
 
 describe("Subida a Mi Tienda sin usar un lote anterior", () => {
+  test("las imágenes por SKU se confirman antes de crear, sin usar el ZIP", async () => {
+    const { contexto, enviar, operaciones, pantallas } = crearContenido();
+    contexto.PanafargoImagenesPorSku = {
+      validar: (imagenes, skus) => {
+        assert.deepEqual(Array.from(skus), imagenesPorFila.skus);
+        return { skus, imagenes };
+      },
+      asignar: async (paquete, { alProgreso }) => {
+        operaciones.push(["imagenes_sku", Array.from(paquete.skus)]);
+        alProgreso({ sku: paquete.skus[1], completadas: 2, total: 2 });
+        return { skus: paquete.skus, imagenesSubidas: 2 };
+      },
+    };
+    const resultado = await enviar(imagenesPorFila);
+    assert.equal(resultado.ok, true);
+    assert.equal(resultado.paso, "productos_creados_pendiente_asociacion");
+    assert.equal(resultado.imagenesSubidas, 2);
+    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["imagenes_sku", imagenesPorFila.skus], ["crear"]]);
+    assert.equal(pantallas.size, 0);
+  });
+
+  test("si una imagen no se confirma no crea productos y retira la espera", async () => {
+    const { contexto, enviar, operaciones, pantallas } = crearContenido();
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async () => { throw new Error("No se confirmó una imagen nueva para el SKU 67890/hola"); },
+    };
+    const resultado = await enviar(imagenesPorFila);
+    assert.equal(resultado.ok, false);
+    assert.match(resultado.error, /67890\/hola/);
+    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"]]);
+    assert.equal(pantallas.size, 0);
+  });
+
+  test("una revisión anterior nunca recibe las imágenes por SKU de otro lote", async () => {
+    const { contexto, enviar, operaciones } = crearContenido("imagenes");
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async () => { throw new Error("No debe ejecutarse"); },
+    };
+    const resultado = await enviar(imagenesPorFila);
+    assert.equal(resultado.ok, true);
+    assert.equal(resultado.paso, "revision_lote_existente");
+    assert.equal(resultado.plantillaSubida, false);
+    assert.equal(resultado.productosPublicados, false);
+    assert.deepEqual(operaciones, []);
+  });
+
+  test("un mapa de imágenes inválido se rechaza antes de cargar el Excel", async () => {
+    const { contexto, enviar, operaciones } = crearContenido();
+    contexto.PanafargoImagenesPorSku = { validar() { throw new Error("Faltan imágenes del lote"); } };
+    const resultado = await enviar(imagenesPorFila);
+    assert.equal(resultado.ok, false);
+    assert.match(resultado.error, /Faltan imágenes/);
+    assert.deepEqual(operaciones, []);
+  });
+
+  test("consultar el estado no limpia la sesión ni modifica productos", async () => {
+    const { contexto, enviar, operaciones, sesion } = crearContenido();
+    contexto.chrome.runtime.getManifest = () => ({ version: "4.1.2" });
+    const consultar = () => enviar({ tipo: "RAPPI_ESTADO_CARGA" });
+    const libre = await consultar();
+    assert.equal(libre.ok, true);
+    assert.equal(libre.cargaEnCurso, false);
+    assert.equal(libre.versionExtension, "4.1.2");
+    sesion.set("panafargoSync:zipReloadIntento", "1");
+    assert.equal((await consultar()).cargaEnCurso, true);
+    assert.equal(sesion.get("panafargoSync:zipReloadIntento"), "1");
+    assert.deepEqual(operaciones, []);
+  });
+
+  test("el estado informa un envío activo hasta que termina su revisión", async () => {
+    const { contexto, enviar } = crearContenido();
+    let resolver;
+    contexto.esperarEstadoDelFlujo = async (_timeout, esperado) => esperado
+      ? { tipo: "imagenes" }
+      : new Promise((resolve) => { resolver = resolve; });
+    const subida = enviar(imagenesManuales);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, true);
+    resolver({ tipo: "plantilla" });
+    await subida;
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
+  });
+
   test("la introducción con solo Subir plantilla se reconoce y continúa hasta cargar el archivo", async () => {
     const { contexto, operaciones, enviar, esperarEstadoReal } = crearContenido();
     let pantalla = "introduccion";
