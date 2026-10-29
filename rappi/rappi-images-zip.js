@@ -150,16 +150,58 @@ export async function construirPaqueteImagenesLocales(filasListas) {
     nombres.add(clave);
   }
 
-  const zip = new window.JSZip();
-  const mapa = [];
+  const entradas = [];
   for (const { producto } of filasListas) {
     const imagen = await descargarImagenPrincipalNormalizada(producto);
     const archivo = nombreArchivoImagenLocal(producto.sku, imagen.extension);
-    zip.file(archivo, imagen.bytes);
-    mapa.push({ sku: producto.sku, archivo });
+    entradas.push({ sku: producto.sku, archivo, bytes: imagen.bytes });
   }
-  if (mapa.length === 0) {
-    throw new Error("No hay imágenes para incluir en el paquete local.");
+  return empaquetarImagenesLocales(entradas);
+}
+
+/** Respalda los mismos bytes preparados para Rappi, sin volver a consultar Shopify. */
+export async function construirPaqueteImagenesLocalesDesdePreparadas(imagenes) {
+  comprobarJsZip();
+  if (!Array.isArray(imagenes) || !imagenes.length) {
+    throw new Error("No hay imágenes preparadas para incluir en el respaldo.");
+  }
+  const nombres = new Set();
+  const skus = new Set();
+  const entradas = imagenes.map((imagen) => {
+    const { sku, nombre, tipoMime, base64 } = imagen || {};
+    let extension;
+    try {
+      if (analizarSku(sku).skuCompleto !== sku) throw new Error();
+      extension = tipoMime === "image/png" ? ".png" : tipoMime === "image/jpeg" ? ".jpg" : null;
+      if (!extension || nombre !== nombreArchivoImagenLocal(sku, extension)) throw new Error();
+      if (typeof base64 !== "string" || !base64) throw new Error();
+    } catch {
+      throw new ErrorImagenesRappi("IMAGEN_PREPARADA_INVALIDA", "El respaldo necesita imágenes JPG/PNG con su SKU completo y nombre seguro.", [sku]);
+    }
+    if (skus.has(sku) || nombres.has(nombre.toLowerCase())) {
+      throw new ErrorImagenesRappi("NOMBRE_IMAGEN_DUPLICADO", `El respaldo contiene un SKU o nombre de imagen duplicado: ${sku}.`, [sku]);
+    }
+    skus.add(sku);
+    nombres.add(nombre.toLowerCase());
+    let binario;
+    try { binario = atob(base64); } catch {
+      throw new ErrorImagenesRappi("IMAGEN_PREPARADA_INVALIDA", `La imagen preparada del SKU ${sku} está dañada.`, [sku]);
+    }
+    if (!binario.length || binario.length > LIMITE_BYTES_IMAGEN) {
+      throw new ErrorImagenesRappi("IMAGEN_PREPARADA_INVALIDA", `La imagen preparada del SKU ${sku} debe tener contenido y no superar 1 MB.`, [sku]);
+    }
+    return { sku, archivo: nombre, bytes: Uint8Array.from(binario, (letra) => letra.charCodeAt(0)) };
+  });
+  return empaquetarImagenesLocales(entradas);
+}
+
+async function empaquetarImagenesLocales(entradas) {
+  if (!entradas.length) throw new Error("No hay imágenes para incluir en el paquete local.");
+  const zip = new window.JSZip();
+  const mapa = [];
+  for (const { sku, archivo, bytes } of entradas) {
+    zip.file(archivo, bytes);
+    mapa.push({ sku, archivo });
   }
 
   // JSON conserva los SKU exactamente, incluidos ceros iniciales y símbolos.

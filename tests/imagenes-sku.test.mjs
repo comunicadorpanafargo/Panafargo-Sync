@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { createRequire } from "node:module";
 import { descargarImagenPrincipal, nombreArchivoImagenLocal } from "../images/image-handler.js";
-import { construirPaqueteImagenesLocales, construirZipImagenes, prepararImagenesIndividualesPorSku, ErrorImagenesRappi } from "../rappi/rappi-images-zip.js";
+import { construirPaqueteImagenesLocales, construirPaqueteImagenesLocalesDesdePreparadas, construirZipImagenes, prepararImagenesIndividualesPorSku, ErrorImagenesRappi } from "../rappi/rappi-images-zip.js";
 
 const require = createRequire(import.meta.url);
 const JSZip = require("../vendor/jszip.min.js");
@@ -217,6 +217,42 @@ test("la preparación individual conserva los SKU completos y la foto principal 
   }
   assert.deepEqual(consultas, filas.map(({ producto }) => producto.imagen_principal));
   assert.deepEqual(filas, antes, "Los nombres de archivo seguros no modifican el SKU ni la publicación.");
+});
+
+test("el respaldo usa los mismos bytes preparados para Rappi sin descargar otra vez las fotos", async () => {
+  const filas = [fila("11351/MoveForward"), fila("11351/YourDream"), fila("10498-1")];
+  const imagenes = await prepararImagenesIndividualesPorSku(filas);
+  const original = structuredClone(imagenes);
+  assert.equal(consultas.length, 3);
+  const blob = await construirPaqueteImagenesLocalesDesdePreparadas(imagenes);
+  assert.equal(consultas.length, 3, "Crear el respaldo no hace peticiones adicionales.");
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const mapa = JSON.parse(await zip.file("mapa_imagenes.json").async("string"));
+  assert.deepEqual(mapa.imagenes, imagenes.map(({ sku, nombre }) => ({ sku, archivo: nombre })));
+  for (const imagen of imagenes) {
+    assert.deepEqual(await zip.file(imagen.nombre).async("uint8array"), Uint8Array.from(Buffer.from(imagen.base64, "base64")));
+  }
+  assert.ok(zip.file("LEEME.txt"));
+  assert.ok(zip.file("mapa_imagenes.csv"));
+  assert.deepEqual(imagenes, original);
+});
+
+test("el respaldo preparado rechaza rutas, identidad inválida, base64 dañado y tipos no admitidos", async () => {
+  const [imagen] = await prepararImagenesIndividualesPorSku([fila("11351/MoveForward")]);
+  for (const datos of [
+    [], [null], [{ ...imagen, sku: "" }], [{ ...imagen, sku: "11351/" }],
+    [{ ...imagen, nombre: "11351/MoveForward.jpg" }], [{ ...imagen, tipoMime: "image/webp" }],
+    [{ ...imagen, base64: "@dañado" }], [{ ...imagen, base64: "" }],
+    [{ ...imagen, base64: btoa("x".repeat(1_000_001)) }],
+  ]) await assert.rejects(construirPaqueteImagenesLocalesDesdePreparadas(datos));
+  assert.equal(consultas.length, 1);
+});
+
+test("el respaldo preparado impide SKU repetidos y nombres que colisionan en Windows", async () => {
+  const imagenes = await prepararImagenesIndividualesPorSku([fila("ABC/hola"), fila("abc/hola")]);
+  for (const entradas of [[imagenes[0], imagenes[0]], imagenes]) {
+    await assert.rejects(construirPaqueteImagenesLocalesDesdePreparadas(entradas), { code: "NOMBRE_IMAGEN_DUPLICADO" });
+  }
 });
 
 test("los SKU duplicados o inválidos detienen la preparación individual antes de descargar", async () => {

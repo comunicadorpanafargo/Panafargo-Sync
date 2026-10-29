@@ -50,18 +50,16 @@
       <section class="panel">
         <div class="section-heading rappi-heading">
           <div><p class="eyebrow">PASO 2</p><h2 id="titulo-rappi">Revisa el lote antes de subir</h2></div>
-          <button id="btn-refrescar-rappi" class="button-secondary" type="button" title="Limpia la preparación de Rappi y vuelve a cargar el lote consultado en Shopify.">↻ Reiniciar Rappi</button>
+          <button id="btn-refrescar-rappi" class="button-secondary" type="button" title="Descarta la preparación anterior de Rappi y abre una plantilla nueva en Mi Tienda. Conserva los productos consultados en Shopify.">↻ Refrescar Rappi</button>
         </div>
         <p class="ayuda">Las publicaciones listas se seleccionan automáticamente. Puedes quitar cualquiera. Verás las existencias de Shopify y la cantidad que se reservará para Rappi.</p>
         <div class="selection-bar"><label class="seleccionar-todos"><input id="seleccionar-todos-rappi" type="checkbox" /> Seleccionar todas las listas</label><span id="seleccion-rappi" aria-live="polite">0 seleccionadas</span></div>
         <p id="aviso-imagenes-disenos" class="notice" hidden>Este lote contiene SKU con «/». Se conserva el código completo y las imágenes se asignan a la fila de cada publicación en Mi Tienda.</p>
         <div class="footer-actions rappi-actions">
-          <button id="btn-subir-mi-tienda" type="button" disabled>Preparar en Mi Tienda</button>
-          <button id="btn-generar-lote-rappi" class="button-secondary" type="button" disabled>Descargar lote e imágenes</button>
+          <button id="btn-subir-mi-tienda" type="button" disabled>Crear productos</button>
         </div>
+        <p class="ayuda">Primero se descargan el Excel y el respaldo de imágenes. La carga en Rappi empieza únicamente cuando ambas descargas terminan correctamente.</p>
         <p id="mensaje-rappi" class="mensaje" role="status" aria-live="polite"></p>
-        <button id="btn-retomar-lote-rappi" class="button-secondary" type="button" aria-describedby="detalle-retomar-lote-rappi" hidden disabled>Retomar lote abierto</button>
-        <p id="detalle-retomar-lote-rappi" class="ayuda" hidden>Retomar conserva el Excel que ya está abierto en Mi Tienda. Revisa que sus datos correspondan a la selección; la extensión comprobará todos los SKU completos antes de cargar imágenes.</p>
         <div id="lista-rappi" class="product-list"><p class="empty-state">Primero busca los productos en el paso 1.</p></div>
         <p class="ayuda">Mi Tienda necesita tu sesión iniciada. La confirmación final de asociación la haces tú en Rappi.</p>
       </section>

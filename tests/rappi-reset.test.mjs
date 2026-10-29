@@ -72,6 +72,7 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
   const eventos = [];
   const mensajesPortal = [];
   const escriturasPortal = [];
+  const listenersActualizacion = new Set();
   globalThis.document = { getElementById: nodo, createElement: (tag) => new Nodo(tag) };
   globalThis.window = new EventTarget();
   globalThis.chrome = {
@@ -96,9 +97,25 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
       query: async () => hooks.tabs || [],
       sendMessage: async (id, mensaje) => {
         mensajesPortal.push({ id, mensaje });
-        return hooks.estadoPortal ? hooks.estadoPortal(id) : { ok: true, cargaEnCurso: false };
+        if (mensaje.tipo === "RAPPI_REINICIAR_PREPARACION") {
+          return hooks.reiniciarPortal ? hooks.reiniciarPortal(id) : { ok: true, reiniciado: true };
+        }
+        return hooks.estadoPortal ? hooks.estadoPortal(id) : { ok: true, cargaEnCurso: false, reiniciarPreparacion: true };
       },
-      update: async () => escriturasPortal.push("update"),
+      onUpdated: {
+        addListener: (callback) => listenersActualizacion.add(callback),
+        removeListener: (callback) => listenersActualizacion.delete(callback),
+      },
+      get: async (id) => ({ id, url: "https://mitienda.rappi.com.co/cms/catalog/bulk-creation/home-manual", status: "complete" }),
+      update: async (id, opciones) => {
+        await hooks.antesDeNavegar?.(id, opciones);
+        escriturasPortal.push({ tipo: "update", id, opciones });
+        const tab = { id, url: opciones.url, status: "complete" };
+        queueMicrotask(() => {
+          for (const callback of listenersActualizacion) callback(id, { status: "complete" }, tab);
+        });
+        return tab;
+      },
       reload: async () => escriturasPortal.push("reload"),
       create: async () => escriturasPortal.push("create"),
     },
@@ -108,7 +125,7 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
   const modulo = await import(url.href);
   const inicio = modulo.initRappiTab();
   if (esperarInicio) await inicio;
-  return { almacen, nodo, borrados, eventos, mensajesPortal, escriturasPortal, inicio };
+  return { almacen, nodo, borrados, eventos, mensajesPortal, escriturasPortal, listenersActualizacion, inicio };
 }
 
 test("el borrado local de Rappi conserva fuente Shopify, contexto, equivalencias y token", async (t) => {
@@ -120,7 +137,7 @@ test("el borrado local de Rappi conserva fuente Shopify, contexto, equivalencias
   assert.deepEqual(borrados, [clavesRappi]);
 });
 
-test("refrescar limpia plantilla y resultados Rappi, recarga fuente sin seleccionar y no toca el portal", async (t) => {
+test("refrescar olvida el borrador del portal, vuelve al inicio y limpia solo la preparación Rappi", async (t) => {
   const entorno = await interfaz(t, { tabs: [{ id: 1 }] });
   const { almacen, nodo, borrados, mensajesPortal, escriturasPortal } = entorno;
   const fuente = structuredClone(almacen.panafargo_productos);
@@ -141,12 +158,18 @@ test("refrescar limpia plantilla y resultados Rappi, recarga fuente sin seleccio
   assert.equal(nodo("mensaje-plantilla-asociacion").textContent, "");
   assert.equal(nodo("mensaje-plantilla-asociacion-generada").textContent, "");
   assert.equal(nodo("mensaje-rappi").dataset.tone, "ok");
-  assert.deepEqual(mensajesPortal, [{ id: 1, mensaje: { tipo: "RAPPI_ESTADO_CARGA" } }]);
-  assert.deepEqual(escriturasPortal, []);
+  assert.deepEqual(mensajesPortal, [
+    { id: 1, mensaje: { tipo: "RAPPI_ESTADO_CARGA" } },
+    { id: 1, mensaje: { tipo: "RAPPI_REINICIAR_PREPARACION" } },
+  ]);
+  assert.deepEqual(escriturasPortal.map(({ tipo, id, opciones }) => [tipo, id, opciones.url]), [
+    ["update", 1, "https://mitienda.rappi.com.co/cms/catalog/bulk-creation/home-manual"],
+  ]);
+  assert.equal(entorno.listenersActualizacion.size, 0);
 });
 
 test("una carga o recuperación activa en cualquier pestaña impide borrar la preparación", async (t) => {
-  const hooks = { tabs: [{ id: 1 }, { id: 2 }], estadoPortal: async (id) => ({ ok: true, cargaEnCurso: id === 2 }) };
+  const hooks = { tabs: [{ id: 1 }, { id: 2 }], estadoPortal: async (id) => ({ ok: true, cargaEnCurso: id === 2, reiniciarPreparacion: true }) };
   const { almacen, nodo, borrados, mensajesPortal } = await interfaz(t, hooks);
   const anterior = structuredClone(almacen);
   await nodo("btn-refrescar-rappi").emitir("click");
@@ -163,6 +186,76 @@ test("no borra si una pestaña de Mi Tienda no confirma el estado", async (t) =>
   assert.deepEqual(almacen, anterior);
   assert.equal(borrados.length, 0);
   assert.match(nodo("mensaje-rappi").textContent, /No se pudo comprobar/);
+});
+
+test("una pestaña antigua impide reiniciar todas antes de enviar el primer borrado al portal", async (t) => {
+  const { almacen, nodo, borrados, mensajesPortal, escriturasPortal } = await interfaz(t, {
+    tabs: [{ id: 1 }, { id: 2 }],
+    estadoPortal: (id) => ({ ok: true, cargaEnCurso: false, reiniciarPreparacion: id === 1 }),
+  });
+  const anterior = structuredClone(almacen);
+  await nodo("btn-refrescar-rappi").emitir("click");
+  assert.deepEqual(almacen, anterior);
+  assert.equal(borrados.length, 0);
+  assert.equal(mensajesPortal.length, 2);
+  assert.ok(mensajesPortal.every(({ mensaje }) => mensaje.tipo === "RAPPI_ESTADO_CARGA"));
+  assert.deepEqual(escriturasPortal, []);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+});
+
+test("un rechazo del reinicio en el portal conserva selección y plantilla locales", async (t) => {
+  const { almacen, nodo, borrados, escriturasPortal } = await interfaz(t, {
+    tabs: [{ id: 1 }], reiniciarPortal: () => ({ ok: false, error: "Comenzó otra carga" }),
+  });
+  const anterior = structuredClone(almacen);
+  await nodo("btn-refrescar-rappi").emitir("click");
+  assert.deepEqual(almacen, anterior);
+  assert.equal(borrados.length, 0);
+  assert.deepEqual(escriturasPortal, []);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+});
+
+test("si el portal no confirma el reinicio, vence la espera sin borrar datos locales", async (t) => {
+  const { almacen, nodo, borrados, escriturasPortal } = await interfaz(t, {
+    tabs: [{ id: 1 }], reiniciarPortal: () => new Promise(() => {}),
+  });
+  const anterior = structuredClone(almacen);
+  t.mock.method(globalThis, "setTimeout", (callback, ms) => {
+    assert.equal(ms, 5000);
+    queueMicrotask(callback);
+    return 0;
+  });
+  await nodo("btn-refrescar-rappi").emitir("click");
+  assert.deepEqual(almacen, anterior);
+  assert.equal(borrados.length, 0);
+  assert.deepEqual(escriturasPortal, []);
+  assert.equal(nodo("btn-refrescar-rappi").disabled, false);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+});
+
+test("si falla volver al formulario, se conserva la preparación local y se retiran los listeners", async (t) => {
+  const { almacen, nodo, borrados, listenersActualizacion } = await interfaz(t, {
+    tabs: [{ id: 1 }], antesDeNavegar: () => { throw new Error("Navegación rechazada"); },
+  });
+  const anterior = structuredClone(almacen);
+  await nodo("btn-refrescar-rappi").emitir("click");
+  assert.deepEqual(almacen, anterior);
+  assert.equal(borrados.length, 0);
+  assert.equal(listenersActualizacion.size, 0);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+});
+
+test("con dos pestañas libres, ambas descartan sus borradores y vuelven al inicio antes del borrado local", async (t) => {
+  const { nodo, borrados, mensajesPortal, escriturasPortal } = await interfaz(t, {
+    tabs: [{ id: 1 }, { id: 2 }],
+  });
+  await nodo("btn-refrescar-rappi").emitir("click");
+  assert.equal(borrados.length, 1);
+  assert.deepEqual(mensajesPortal.map(({ id, mensaje }) => [id, mensaje.tipo]), [
+    [1, "RAPPI_ESTADO_CARGA"], [2, "RAPPI_ESTADO_CARGA"],
+    [1, "RAPPI_REINICIAR_PREPARACION"], [2, "RAPPI_REINICIAR_PREPARACION"],
+  ]);
+  assert.deepEqual(escriturasPortal.map(({ tipo, id }) => [tipo, id]), [["update", 1], ["update", 2]]);
 });
 
 test("espera la restauración inicial completa antes de permitir el reset", async (t) => {
@@ -205,7 +298,7 @@ test("un segundo clic mientras se consulta el portal no inicia otro reset", asyn
   assert.equal(nodo("btn-refrescar-rappi").disabled, true);
   await nodo("btn-refrescar-rappi").emitir("click");
   assert.equal(mensajesPortal.length, 1);
-  estado.resolver({ ok: true, cargaEnCurso: false });
+  estado.resolver({ ok: true, cargaEnCurso: false, reiniciarPreparacion: true });
   await primero;
   assert.equal(borrados.length, 1);
 });
