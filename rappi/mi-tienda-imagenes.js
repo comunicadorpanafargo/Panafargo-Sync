@@ -85,16 +85,27 @@ globalThis.PanafargoImagenesPorSku = (() => {
   }
 
   async function asignar(paquete, {
-    alProgreso = () => {}, timeoutPaginaMs = 20000, timeoutImagenMs = 60000, intervaloMs = 150,
+    alProgreso = () => {}, timeoutPaginaMs = 60000, timeoutImagenMs = 60000, intervaloMs = 150,
   } = {}) {
     const esperados = new Set(paquete.skus);
     const confirmados = new Set();
     const esquema = [];
     let pagina;
-    const cargarPagina = () => esperarResultado(() => {
-      const actual = leerPagina();
-      return actual?.filas.length ? actual : null;
-    }, timeoutPaginaMs, intervaloMs, "No aparecieron las filas de imágenes de Mi Tienda.");
+    const cargarPagina = async () => {
+      try {
+        return await esperarResultado(() => {
+          const actual = leerPagina();
+          return actual?.filas.length ? actual : null;
+        }, timeoutPaginaMs, intervaloMs, "No aparecieron las filas de imágenes de Mi Tienda.");
+      } catch (error) {
+        if (error.message !== "No aparecieron las filas de imágenes de Mi Tienda.") throw error;
+        const ambitos = document.querySelectorAll(AMBITO);
+        const detalle = ambitos.length === 1
+          ? "La pantalla de revisión está abierta, pero no contiene filas de productos disponibles."
+          : "No se encontró una única tabla de revisión de productos en esta pantalla.";
+        throw new Error(`${error.message} ${detalle} Revisa si Rappi informó un error al procesar el Excel. Pulsa Refrescar Rappi y crea el lote desde una plantilla nueva.`);
+      }
+    };
     const navegar = async (enlace, destino) => {
       const anterior = pagina;
       enlace.click();

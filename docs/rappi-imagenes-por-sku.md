@@ -1,6 +1,6 @@
 # Imágenes de SKU con `/`: causa, contrato y comprobación
 
-Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.3.
+Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.4.
 
 ## Problema reproducido
 
@@ -30,7 +30,9 @@ El bundle de catálogo permite comprobar:
 
 ## Solución implementada
 
-Para un lote que contenga separadores, `Preparar en Mi Tienda` genera el Excel con los SKU completos y un manifiesto de imágenes por SKU, no un ZIP para el importador masivo. Cada imagen corresponde a la foto principal de su publicación. Se usan JPG/PNG; WebP se recodifica a JPEG sin aumentar las dimensiones. Un presupuesto de transporte evita enviar un mensaje excesivamente grande y pide dividir la selección si hace falta.
+Para un lote que contenga separadores, `Crear productos` genera el Excel con los SKU completos y un manifiesto de imágenes por SKU, no un ZIP para el importador masivo. Cada imagen corresponde a la foto principal de su publicación. Se usan JPG/PNG; WebP se recodifica a JPEG sin aumentar las dimensiones. Un presupuesto de transporte evita enviar un mensaje excesivamente grande y pide dividir la selección si hace falta.
+
+El mismo botón descarga el Excel y un respaldo ZIP antes de enviar el lote. Para los diseños, el respaldo se construye desde los bytes ya preparados para los controles individuales; no vuelve a consultar las fotos. Para SKU normales, se descarga el mismo ZIP que se enviará al portal. `chrome.downloads.download()` entrega un ID de inicio: la extensión espera el estado real `complete` de ambas descargas mediante eventos y consulta de Chrome. Cancelación, interrupción, borrado o timeout detienen el envío.
 
 Antes de adjuntar la primera imagen se recorren **todas las páginas** y se comprueban SKU exactos, ausencia de duplicados/faltantes/filas ajenas y un único input disponible por fila. Luego se vuelve al inicio y se asignan las imágenes en una segunda pasada, comprobando que el lote y la paginación sigan siendo los mismos. No se modifica ni el SKU de Shopify ni el SKU del Excel de creación.
 
@@ -38,21 +40,23 @@ Tras cada `change`, se espera una URL HTTP(S) nueva en `img.product-image`, una 
 
 Los lotes sin separadores conservan su ZIP automático. El paquete de respaldo para los lotes con `/` contiene archivos planos seguros y un mapa de SKU completos; **no debe subirse mediante «Cárgalas aquí»**. Es una ayuda para consulta o carga individual si se necesita recuperar el trabajo.
 
-## Retomar una revisión abierta
+## Nueva plantilla y descarte del borrador
 
 En 4.1.2, detectar una revisión de imágenes detenía incondicionalmente el envío, incluso cuando era el mismo lote. Ese es el origen del mensaje «Mi Tienda ya tiene un lote en revisión de imágenes»: todavía no se habían enviado las fotos ni pulsado Crear productos.
 
-Desde 4.1.3 se conserva esa parada inicial y se ofrece **Retomar lote abierto** cuando se dispone del manifiesto de imágenes por SKU. El clic explícito usa la misma pestaña y conserva su Excel; no sustituye nombres, descripciones, categorías ni presentación por los del archivo recién generado. El usuario debe revisar esos datos antes de retomarlo. La igualdad de SKU no demuestra que la plantilla tenga los mismos metadatos.
+4.1.3 añadió una reanudación explícita. En 4.1.4 se retira esa acción: el recorrido usa una plantilla nueva después de **Refrescar Rappi**.
 
-La reanudación exige que la pestaña siga mostrando la revisión de imágenes y ejecuta la misma comprobación global del lote que una carga nueva, antes de adjuntar la primera foto. No crea una plantilla nueva si el portal cambió de pantalla. La oferta se descarta al cambiar la selección, recargar el lote fuente o reiniciar la preparación; una pestaña distinta no puede recibirla. Después de confirmar todas las imágenes se continúa con Crear productos, manteniendo la asociación final manual. Si el portal no confirma que terminó la creación, se debe revisar su estado antes de repetir el envío.
+La entrada oficial es `/cms/catalog/bulk-creation/home-manual`. El frontend público identifica `/manual/:page` como revisión de un archivo cuyo ID lee desde `ean-match-creation-file-id`. Abrir directamente `/manual/1` sin un ID válido puede mostrar el encabezado de imágenes sin productos. La nueva ruta empieza en la introducción de personalizados y sigue su enlace real hasta el formulario de carga.
 
-Antes de pulsar Crear se guarda una marca de creación pendiente en la sesión de esa pestaña, ligada al ID de archivo que el frontend de Rappi guarda en `ean-match-creation-file-id`. La marca se retira al confirmar la pantalla de asociación. Si se agota la espera o se recarga Mi Tienda, impide volver a enviar fotos o pulsar Crear para ese mismo archivo. Para comenzar otro lote se exige cargar una plantilla nueva, confirmar su avance y obtener un ID distinto; cambiar solo el ID de `localStorage` desde otra pestaña no basta. Una marca o ID ilegible conserva el bloqueo. Reiniciar la preparación local no borra esa protección.
+Se amplía a 60 segundos la espera de las filas. Si la tabla sigue ausente o vacía, el error distingue esos estados y pide revisar el procesamiento del Excel y refrescar. No se sustituyen los selectores por coincidencias parciales ni se permite crear con cero imágenes confirmadas.
+
+Antes de pulsar Crear se conserva la marca de creación pendiente. Si no se confirma el resultado, impide un reenvío accidental del mismo borrador. Refrescar es el descarte explícito solicitado por el usuario: comprueba que no haya una operación activa, borra solo las marcas del flujo y el ID de borrador, y navega todas las pestañas a una carga nueva. No cancela solicitudes ya enviadas al servidor ni elimina productos creados; si una creación quedó sin confirmación, se debe revisar su resultado antes de crear otro lote.
 
 ## Asociación y reinicio
 
 La asociación encuentra cada SKU completo después de retirar una sola vez el prefijo `PANAFARGOSAS_`. Ignora espacios exteriores al comparar, conserva IDs y celdas originales, distingue guiones/mayúsculas/diseños y rechaza duplicados. Las filas ajenas a la selección se excluyen del archivo generado. Sin coincidencias se bloquea la descarga; las coincidencias parciales informan todos los SKU faltantes. Una plantilla dañada o ilegible pide volver a cargar el archivo de Rappi en lugar de usar silenciosamente IDs del respaldo.
 
-`Reiniciar Rappi` borra selección y plantilla local de ese destino, limpia mensajes y relee el lote fuente guardado con las publicaciones desmarcadas. No altera productos, inventarios, contexto, equivalencias ni credenciales de Shopify. La consulta `RAPPI_ESTADO_CARGA` no modifica el portal; si informa una operación activa o no puede confirmar el estado, el reinicio conserva la preparación anterior. La cola de selección anterior termina antes del borrado para evitar que vuelva a aparecer.
+`Refrescar Rappi` consulta primero `RAPPI_ESTADO_CARGA` en todas las pestañas y exige que tengan la capacidad actual de reinicio. Luego obtiene la confirmación de `RAPPI_REINICIAR_PREPARACION` y espera la navegación a `home-manual` antes de borrar selección y plantilla locales. Relee los productos de Shopify con las publicaciones desmarcadas. Conserva fuente, inventarios, contexto, equivalencias, tokens, cookies y sesión del usuario. La cola de selección anterior termina antes del borrado para evitar que vuelva a aparecer. Un fallo de confirmación o navegación impide presentar el reinicio como completado.
 
 ## Alcance de las pruebas
 

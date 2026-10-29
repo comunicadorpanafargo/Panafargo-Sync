@@ -6,27 +6,26 @@ Las capturas originales mostraban tablas de cinco y seis columnas dentro de una 
 
 Se implementaron tres pasos con nombres de tarea: revisar, preparar y asociar. Las tarjetas conservan legibles los SKU completos, explican los bloqueos y separan el inventario de origen de la cantidad disponible para Rappi. El resumen usa unidades de conteo explícitas. La ventana es más amplia y la presentación se adapta también a tamaños pequeños.
 
-Se eliminaron clics y descargas obligatorios: no hay validación individual separada, los resultados se preparan automáticamente, las publicaciones listas aparecen seleccionadas, la plantilla de asociación se guarda al elegirla y las imágenes se descargan en un solo paquete. Se conservan el lote y las selecciones al recargar. Existe un reinicio explícito y reintento solo de pendientes.
+Se eliminaron clics intermedios: no hay validación individual separada, los resultados se preparan automáticamente, las publicaciones listas aparecen seleccionadas y la plantilla de asociación se guarda al elegirla. Crear productos descarga el Excel y un respaldo de imágenes, espera a que terminen y empieza la carga. Se conservan el lote y las selecciones al recargar. Existe un refresco explícito y reintento solo de pendientes.
 
 Las capturas aportadas se revisaron. El MP4 y el ZIP de la grabación superaron el límite de transferencia de32MiB y no pudieron inspeccionarse; no se atribuyen observaciones adicionales al video.
 
 ## Botones necesarios y acciones secundarias
 
-El camino principal de la extensión es **Buscar y validar → Preparar en Mi Tienda → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, las imágenes se asignan automáticamente a sus filas por el SKU completo, usando el control individual confirmado en el frontend público de Rappi.
+El camino principal de la extensión es **Buscar y validar → Crear productos → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, las imágenes se asignan automáticamente a sus filas por el SKU completo, usando el control individual confirmado en el frontend público de Rappi.
 
 | Control actual | Utilidad | Decisión recomendada |
 | --- | --- | --- |
 | **Buscar y validar** | Esencial: consulta Shopify y revisa cada publicación. | Mantener como acción principal del paso 1. |
 | **Continuar a Rappi** y pestañas de pasos | Navegación, sin una nueva consulta ni publicación por sí misma. | Conservar un avance claro y la posibilidad de volver. «Continuar» puede retirarse si el acceso al paso 2 sigue siendo evidente; no eliminar la navegación de recuperación. |
-| **Preparar en Mi Tienda** | Acción principal del camino con la pestaña de Rappi: genera y entrega los archivos que corresponden. | Mantener. No necesita pulsar antes «Descargar lote e imágenes». |
+| **Crear productos** | Genera Excel e imágenes, descarga el respaldo y espera ambas descargas completas antes del envío a Mi Tienda. | Acción única del paso 2. Sustituye preparación y descarga separadas. |
 | **Seleccionar todas** y casillas por publicación | Permiten excluir y volver a incluir SKU completos sin borrar datos ni repetir la consulta. | Mantener; reemplazan la antigua X para quitar productos. |
 | **Seleccionar plantilla (.xlsx)** | Esencial para usar el archivo de asociación del lote real. | Mantener el selector. El guardado tras validar ya es automático. |
 | **Descargar precios y existencias** | Esencial en la asociación actual: produce el archivo completado que se sube y revisa en Rappi. | Mantener. Es el antiguo «Descargar plantilla generada» con un nombre que explica su resultado. |
-| **Descargar lote e imágenes** | Alternativa manual y recuperación si la preparación del portal falla. | Conservar como acción secundaria u opción plegada; no exigirla en la vía principal. No es inútil aunque comparta generación de archivos con «Preparar». |
 | **Descargar reporte CSV** | Registro de resultados y diagnóstico; no crea ni asocia productos. | Opcional. Puede ir en opciones secundarias, sin convertir la descarga en requisito. |
 | **Reintentar pendientes** | Recuperación de consultas fallidas o publicaciones corregidas en Shopify. | Mantener y mostrar o habilitar solo cuando existan pendientes; no obligar a repetir todo el lote. |
 | **Nuevo lote** | Reinicia explícitamente la selección y revisión locales. | Mantener como acción secundaria, separada del envío al portal. |
-| **Reiniciar Rappi** | Limpia solo la selección, mensajes y plantilla de Rappi y relee el lote fuente guardado. | Mantener arriba del paso 2; conserva Shopify y bloquea el borrado durante operaciones activas. |
+| **Refrescar Rappi** | Descarta el borrador del portal, vuelve a una plantilla nueva y limpia selección, mensajes y plantilla de Rappi. | Mantener arriba del paso 2; conserva Shopify y la sesión del usuario, y bloquea el borrado durante operaciones activas. |
 
 Los controles redundantes de las capturas antiguas ya no forman parte de la interfaz actual:
 
@@ -35,8 +34,10 @@ Los controles redundantes de las capturas antiguas ya no forman parte de la inte
 - **Validar individualmente**, **Buscar un SKU** y **Descargar imagen individual** como recorridos separados: el lote atiende también una sola referencia, sin repetir pantallas ni descargas por producto.
 - **X para quitar:** se sustituyó por desmarcar la publicación; se conserva la posibilidad de recuperarla en el mismo lote.
 - **Subir una plantilla de asociación sin completar:** no sustituye la generación de precios y existencias ni la revisión final del usuario.
+- **Retomar lote abierto:** retirado; para otro intento se descarta el borrador mediante Refrescar Rappi.
+- **Descargar lote e imágenes** como botón separado: incluido en Crear productos, sin repetir consultas de imágenes.
 
-Plegar descargas opcionales o condicionar la visibilidad de los reintentos es una recomendación de presentación; no debe confundirse con eliminar esas capacidades. El inventario anterior se basa en el código del checkout y su flujo local. No demuestra que se haya ejecutado una creación o asociación en el portal real de Rappi.
+El respaldo se conserva automáticamente aunque se retire el botón separado de descarga. El inventario anterior se basa en el código del checkout y su flujo local. No demuestra que se haya ejecutado una creación o asociación en el portal real de Rappi.
 
 ## Código depurado
 
