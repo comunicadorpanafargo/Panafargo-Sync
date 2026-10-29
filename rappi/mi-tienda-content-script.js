@@ -43,6 +43,7 @@ const TEXTO_TITULO_REVISION_IMAGENES = "Carga las imágenes y revisa la informac
 const TEXTO_BOTON_CONTINUAR = "Continuar";
 const TEXTO_BOTON_CREAR_PRODUCTOS = "Crear productos";
 const CLAVE_REINTENTO_404 = "panafargoSync:zipReloadIntento";
+const CLAVE_CREACION_PENDIENTE = "panafargoSync:creacionPendiente";
 const ESPERAS_REINTENTO_404_MS = [60000]; // 1 minuto, un solo intento de recarga
 const DURACION_BARRA_REINTENTO_404_MS = 58000;
 let timerReintento404 = null;
@@ -105,6 +106,7 @@ chrome.runtime.onMessage.addListener((mensaje, _sender, sendResponse) => {
       cargaEnCurso: subidaEnCurso || sessionStorage.getItem(CLAVE_REINTENTO_404) !== null,
       versionExtension: chrome.runtime.getManifest?.().version || null,
       imagenesPorSku: Boolean(globalThis.PanafargoImagenesPorSku),
+      reanudarRevisionPorSku: Boolean(globalThis.PanafargoImagenesPorSku),
     });
     return;
   }
@@ -153,13 +155,14 @@ async function ejecutarSubida({
   imagenesZipNombre,
   imagenesPorSku,
   imagenesManualesPorSku = false,
+  reanudarRevision = false,
   skus = [],
 }) {
   let etapa = "inicio";
   try {
     etapa = "plantilla";
     return await ejecutarSubidaPorEtapas(
-      { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesPorSku, imagenesManualesPorSku, skus },
+      { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesPorSku, imagenesManualesPorSku, reanudarRevision, skus },
       (nombreEtapa) => { etapa = nombreEtapa; }
     );
   } catch (err) {
@@ -168,7 +171,7 @@ async function ejecutarSubida({
 }
 
 async function ejecutarSubidaPorEtapas(
-  { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesPorSku, imagenesManualesPorSku = false, skus = [] },
+  { xlsxBase64, xlsxNombre, imagenesZipBase64, imagenesZipNombre, imagenesPorSku, imagenesManualesPorSku = false, reanudarRevision = false, skus = [] },
   establecerEtapa
 ) {
   let paquetePorSku;
@@ -186,13 +189,23 @@ async function ejecutarSubidaPorEtapas(
   }
 
   const estadoInicial = await esperarEstadoDelFlujo(20000);
+  if (estadoInicial?.tipo === "imagenes") verificarCreacionPendiente();
+  if (reanudarRevision === true) {
+    if (estadoInicial?.tipo !== "imagenes" || !paquetePorSku) {
+      throw new Error("La revisión de imágenes que querías retomar ya no está disponible. No se cargó otra plantilla ni se crearon productos. Revisa Mi Tienda y prepara el lote nuevamente.");
+    }
+    return asignarImagenesPorSkuYCrear(paquetePorSku, establecerEtapa, true);
+  }
   if (estadoInicial?.tipo === "imagenes") {
     if (imagenesManualesPorSku && !paquetePorSku) return resultadoImagenesManuales(skus, false);
     return {
       paso: "revision_lote_existente",
       plantillaSubida: false,
       productosPublicados: false,
-      mensaje:
+      reanudarRevisionDisponible: Boolean(paquetePorSku),
+      mensaje: paquetePorSku
+        ? "Mi Tienda ya tiene un lote en revisión de imágenes. Para completarlo, revisa que su plantilla y datos sean los correctos y pulsa Retomar lote abierto. Se conservará el Excel abierto en Rappi y se comprobarán todos los SKU completos de la selección antes de enviar imágenes. Para usar un Excel nuevo, vuelve primero a Subir plantilla en Mi Tienda. Todavía no se enviaron imágenes ni se pulsó Crear productos."
+        :
         "Mi Tienda ya tiene un lote en revisión de imágenes. No se cargó la nueva plantilla, no se enviaron imágenes ni se pulsó Crear productos. Revisa el lote existente o vuelve a la pantalla de carga de plantilla para empezar uno nuevo.",
     };
   }
@@ -249,30 +262,9 @@ async function ejecutarSubidaPorEtapas(
   // y no hace falta hacer nada más aquí.
 
   if (paquetePorSku) {
-    establecerEtapa("asignar_imagenes_por_sku");
     const revision = await esperarEstadoDelFlujo(20000, "imagenes");
     if (!revision) throw new Error("No se confirmó la revisión de imágenes. No se pulsó Crear productos.");
-    const progreso = mostrarProgresoCargaImagenes();
-    try {
-      progreso.actualizar("Comprobando los SKU del lote", "Mi Tienda debe mostrar una única publicación por SKU completo antes de asignar sus imágenes.");
-      const resultado = await PanafargoImagenesPorSku.asignar(paquetePorSku, {
-        alProgreso: ({ sku, completadas, total }) => progreso.actualizar(
-          `Asignando imágenes: ${completadas} de ${total}`,
-          `SKU completo: ${sku}. Espera mientras Mi Tienda confirma la imagen de esta publicación.`
-        ),
-      });
-      establecerEtapa("crear_productos");
-      progreso.actualizar("Creando productos en Rappi", "Todas las imágenes del lote se confirmaron por SKU completo. Espera el resultado de Mi Tienda.");
-      await continuarYCcrearProductos();
-      return {
-        paso: "productos_creados_pendiente_asociacion",
-        imagenesSubidas: resultado.imagenesSubidas,
-        skus: resultado.skus,
-        mensaje: `Mi Tienda confirmó ${resultado.imagenesSubidas} imágenes por SKU completo y la creación de los productos. La asociación queda pendiente: usa la plantilla enviada por Rappi y revisa sus filas antes de confirmarla allí.`,
-      };
-    } finally {
-      progreso.quitar();
-    }
+    return asignarImagenesPorSkuYCrear(paquetePorSku, establecerEtapa);
   }
 
   if (imagenesManualesPorSku) {
@@ -286,7 +278,38 @@ async function ejecutarSubidaPorEtapas(
     return resultadoImagenesManuales(skus, true);
   }
 
+  verificarCreacionPendiente({ plantillaNuevaConfirmada: true });
   return subirImagenes(imagenesZipBase64, imagenesZipNombre, establecerEtapa);
+}
+
+async function asignarImagenesPorSkuYCrear(paquetePorSku, establecerEtapa, revisionRetomada = false) {
+  verificarCreacionPendiente({ plantillaNuevaConfirmada: !revisionRetomada });
+  establecerEtapa("asignar_imagenes_por_sku");
+  const progreso = mostrarProgresoCargaImagenes();
+  try {
+    progreso.actualizar("Comprobando los SKU del lote", "Mi Tienda debe mostrar una única publicación por SKU completo antes de asignar sus imágenes.");
+    // También al retomar: la primera pasada comprueba TODAS las páginas
+    // antes de adjuntar archivos. No basta con que coincida una fila visible.
+    const resultado = await PanafargoImagenesPorSku.asignar(paquetePorSku, {
+      alProgreso: ({ sku, completadas, total }) => progreso.actualizar(
+        `Asignando imágenes: ${completadas} de ${total}`,
+        `SKU completo: ${sku}. Espera mientras Mi Tienda confirma la imagen de esta publicación.`
+      ),
+    });
+    establecerEtapa("crear_productos");
+    progreso.actualizar("Creando productos en Rappi", "Todas las imágenes del lote se confirmaron por SKU completo. Espera el resultado de Mi Tienda.");
+    await continuarYCcrearProductos();
+    return {
+      paso: "productos_creados_pendiente_asociacion",
+      revisionRetomada,
+      plantillaSubida: !revisionRetomada,
+      imagenesSubidas: resultado.imagenesSubidas,
+      skus: resultado.skus,
+      mensaje: `Mi Tienda confirmó ${resultado.imagenesSubidas} imágenes por SKU completo y la creación de los productos.${revisionRetomada ? " Se conservó la plantilla que ya estaba abierta en Rappi." : ""} La asociación queda pendiente: usa la plantilla enviada por Rappi y revisa sus filas antes de confirmarla allí.`,
+    };
+  } finally {
+    progreso.quitar();
+  }
 }
 
 function resultadoImagenesManuales(skus, plantillaSubida) {
@@ -585,6 +608,7 @@ function mostrarProgresoEsperaRecarga() {
 }
 
 async function continuarYCcrearProductos() {
+  verificarCreacionPendiente();
   const drawer = Array.from(document.querySelectorAll(SELECTOR_DRAWER))
     .find((elemento) => elemento.offsetParent !== null);
   if (drawer) {
@@ -599,6 +623,9 @@ async function continuarYCcrearProductos() {
   if (!botonCrear) {
     throw new Error('No apareció el botón habilitado "Crear productos" después de cargar las imágenes.');
   }
+  // El clic puede llegar al servidor aunque se agote la espera de la vista.
+  // Conservar la marca incluso tras F5 evita repetir una creación incierta.
+  sessionStorage.setItem(CLAVE_CREACION_PENDIENTE, JSON.stringify({ fileId: obtenerIdLoteRappi() }));
   botonCrear.click();
 
   const pantallaAsociacion = await esperarBotonPorTexto(TEXTO_BOTON_ASOCIAR_PRODUCTOS, 120000);
@@ -607,6 +634,32 @@ async function continuarYCcrearProductos() {
       'Se pulsó "Crear productos", pero Mi Tienda no confirmó que la creación terminó. Revisa el estado de la página; la asociación no se inició.'
     );
   }
+  sessionStorage.removeItem(CLAVE_CREACION_PENDIENTE);
+}
+
+function obtenerIdLoteRappi() {
+  try {
+    const id = JSON.parse(globalThis.localStorage?.getItem("ean-match-creation-file-id") || "null");
+    if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) return String(id);
+    if (typeof id === "string" && id.trim()) return id.trim();
+    return null;
+  } catch { return null; }
+}
+
+function verificarCreacionPendiente({ plantillaNuevaConfirmada = false } = {}) {
+  const pendiente = sessionStorage.getItem(CLAVE_CREACION_PENDIENTE);
+  if (pendiente === null) return;
+  let anterior;
+  try { anterior = JSON.parse(pendiente)?.fileId; } catch { /* Marca ilegible: no repetir el clic. */ }
+  const actual = obtenerIdLoteRappi();
+  // El ID de localStorage es compartido por las pestañas de Rappi. Un cambio
+  // allí no demuestra que ESTA vista haya cambiado: exigir además que este
+  // envío haya cargado una plantilla nueva y confirmado su avance.
+  if (plantillaNuevaConfirmada && anterior && actual && anterior !== actual) {
+    sessionStorage.removeItem(CLAVE_CREACION_PENDIENTE);
+    return;
+  }
+  throw new Error("Ya se pulsó Crear productos para este lote, pero no se confirmó el resultado. Revisa en Mi Tienda si terminó la creación o si Rappi informó un error antes de repetirla. No se volvieron a enviar imágenes ni se pulsó Crear productos otra vez. Para comenzar un lote distinto, carga una plantilla nueva en Mi Tienda.");
 }
 
 function normalizarTexto(t) {

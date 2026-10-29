@@ -1,6 +1,6 @@
 # Imágenes de SKU con `/`: causa, contrato y comprobación
 
-Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.2.
+Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.3.
 
 ## Problema reproducido
 
@@ -37,6 +37,16 @@ Antes de adjuntar la primera imagen se recorren **todas las páginas** y se comp
 Tras cada `change`, se espera una URL HTTP(S) nueva en `img.product-image`, una imagen cargada con dimensiones reales y la ausencia del loader. El input vacío no se toma como error ni como confirmación. Una imagen anterior, URL `data:`, imagen rota, procesamiento permanente, cambio de filas o timeout detiene el proceso antes de pulsar Crear productos. Cuando todas las imágenes están confirmadas se utiliza el recorrido existente de creación; la asociación final sigue siendo una operación independiente que confirma el usuario.
 
 Los lotes sin separadores conservan su ZIP automático. El paquete de respaldo para los lotes con `/` contiene archivos planos seguros y un mapa de SKU completos; **no debe subirse mediante «Cárgalas aquí»**. Es una ayuda para consulta o carga individual si se necesita recuperar el trabajo.
+
+## Retomar una revisión abierta
+
+En 4.1.2, detectar una revisión de imágenes detenía incondicionalmente el envío, incluso cuando era el mismo lote. Ese es el origen del mensaje «Mi Tienda ya tiene un lote en revisión de imágenes»: todavía no se habían enviado las fotos ni pulsado Crear productos.
+
+Desde 4.1.3 se conserva esa parada inicial y se ofrece **Retomar lote abierto** cuando se dispone del manifiesto de imágenes por SKU. El clic explícito usa la misma pestaña y conserva su Excel; no sustituye nombres, descripciones, categorías ni presentación por los del archivo recién generado. El usuario debe revisar esos datos antes de retomarlo. La igualdad de SKU no demuestra que la plantilla tenga los mismos metadatos.
+
+La reanudación exige que la pestaña siga mostrando la revisión de imágenes y ejecuta la misma comprobación global del lote que una carga nueva, antes de adjuntar la primera foto. No crea una plantilla nueva si el portal cambió de pantalla. La oferta se descarta al cambiar la selección, recargar el lote fuente o reiniciar la preparación; una pestaña distinta no puede recibirla. Después de confirmar todas las imágenes se continúa con Crear productos, manteniendo la asociación final manual. Si el portal no confirma que terminó la creación, se debe revisar su estado antes de repetir el envío.
+
+Antes de pulsar Crear se guarda una marca de creación pendiente en la sesión de esa pestaña, ligada al ID de archivo que el frontend de Rappi guarda en `ean-match-creation-file-id`. La marca se retira al confirmar la pantalla de asociación. Si se agota la espera o se recarga Mi Tienda, impide volver a enviar fotos o pulsar Crear para ese mismo archivo. Para comenzar otro lote se exige cargar una plantilla nueva, confirmar su avance y obtener un ID distinto; cambiar solo el ID de `localStorage` desde otra pestaña no basta. Una marca o ID ilegible conserva el bloqueo. Reiniciar la preparación local no borra esa protección.
 
 ## Asociación y reinicio
 
