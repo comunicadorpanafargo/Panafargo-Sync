@@ -45,10 +45,7 @@ const TEXTO_BOTON_CREAR_PRODUCTOS = "Crear productos";
 const CLAVE_REINTENTO_404 = "panafargoSync:zipReloadIntento";
 const CLAVE_CREACION_PENDIENTE = "panafargoSync:creacionPendiente";
 const ESPERAS_REINTENTO_404_MS = [60000]; // 1 minuto, un solo intento de recarga
-const DURACION_BARRA_REINTENTO_404_MS = 58000;
 let timerReintento404 = null;
-let intervaloProgresoReintento404 = null;
-let barraProgresoReintento404 = null;
 let subidaEnCurso = false;
 
 const TEXTO_BOTON_ASOCIAR_PRODUCTOS = "Asociar productos";
@@ -83,18 +80,11 @@ const TEXTO_BOTON_ASOCIAR_PRODUCTOS = "Asociar productos";
   // nunca pulsa "Asociar productos".
   subidaEnCurso = true;
   sessionStorage.removeItem(CLAVE_REINTENTO_404);
-  let progreso;
   try {
-    progreso = mostrarProgresoCargaImagenes();
-    progreso.actualizar(
-      "Preparando la creación de productos",
-      "Mi Tienda se actualizó. Espera mientras Rappi termina de crear los productos."
-    );
     await continuarYCcrearProductos();
   } catch (err) {
     console.error("No se pudo continuar la creación de productos tras la recarga:", err);
   } finally {
-    progreso?.quitar();
     subidaEnCurso = false;
   }
 })();
@@ -125,11 +115,7 @@ chrome.runtime.onMessage.addListener((mensaje, _sender, sendResponse) => {
       sessionStorage.removeItem(CLAVE_REINTENTO_404);
       sessionStorage.removeItem(CLAVE_CREACION_PENDIENTE);
       clearTimeout(timerReintento404);
-      clearInterval(intervaloProgresoReintento404);
-      barraProgresoReintento404?.remove();
       timerReintento404 = null;
-      intervaloProgresoReintento404 = null;
-      barraProgresoReintento404 = null;
       sendResponse({ ok: true, reiniciado: true });
     } catch (error) {
       sendResponse({ ok: false, error: `No se pudo descartar el borrador de Rappi. ${error.message}` });
@@ -291,30 +277,18 @@ async function ejecutarSubidaPorEtapas(
 async function asignarImagenesPorSkuYCrear(paquetePorSku, establecerEtapa) {
   verificarCreacionPendiente({ plantillaNuevaConfirmada: true });
   establecerEtapa("asignar_imagenes_por_sku");
-  const progreso = mostrarProgresoCargaImagenes();
-  try {
-    progreso.actualizar("Comprobando los SKU del lote", "Mi Tienda debe mostrar una única publicación por SKU completo antes de asignar sus imágenes.");
-    // La primera pasada comprueba TODAS las páginas
-    // antes de adjuntar archivos. No basta con que coincida una fila visible.
-    const resultado = await PanafargoImagenesPorSku.asignar(paquetePorSku, {
-      alProgreso: ({ sku, completadas, total }) => progreso.actualizar(
-        `Asignando imágenes: ${completadas} de ${total}`,
-        `SKU completo: ${sku}. Espera mientras Mi Tienda confirma la imagen de esta publicación.`
-      ),
-    });
-    establecerEtapa("crear_productos");
-    progreso.actualizar("Creando productos en Rappi", "Todas las imágenes del lote se confirmaron por SKU completo. Espera el resultado de Mi Tienda.");
-    await continuarYCcrearProductos();
-    return {
-      paso: "productos_creados_pendiente_asociacion",
-      plantillaSubida: true,
-      imagenesSubidas: resultado.imagenesSubidas,
-      skus: resultado.skus,
-      mensaje: `Mi Tienda confirmó ${resultado.imagenesSubidas} imágenes por SKU completo y la creación de los productos. La asociación queda pendiente: usa la plantilla enviada por Rappi y revisa sus filas antes de confirmarla allí.`,
-    };
-  } finally {
-    progreso.quitar();
-  }
+  // La primera pasada comprueba TODAS las páginas
+  // antes de adjuntar archivos. No basta con que coincida una fila visible.
+  const resultado = await PanafargoImagenesPorSku.asignar(paquetePorSku);
+  establecerEtapa("crear_productos");
+  await continuarYCcrearProductos();
+  return {
+    paso: "productos_creados_pendiente_asociacion",
+    plantillaSubida: true,
+    imagenesSubidas: resultado.imagenesSubidas,
+    skus: resultado.skus,
+    mensaje: `Mi Tienda confirmó ${resultado.imagenesSubidas} imágenes por SKU completo y la creación de los productos. La asociación queda pendiente: usa la plantilla enviada por Rappi y revisa sus filas antes de confirmarla allí.`,
+  };
 }
 
 function resultadoImagenesManuales(skus, plantillaSubida) {
@@ -415,33 +389,17 @@ async function subirImagenes(
   // ---- Paso 5b: esperar a que Rappi termine de procesar el .zip ----
   // Se espera la señal real de éxito o error antes de continuar con la creación.
   establecerEtapa("procesar_zip");
-  const progresoCarga = mostrarProgresoCargaImagenes();
-  let r;
-  try {
-    r = await esperarResultadoProcesamientoZip(600000);
-  } catch (err) {
-    progresoCarga.quitar();
-    throw err;
-  }
+  const r = await esperarResultadoProcesamientoZip(600000);
   const traza = describirTraza(r);
 
   if (r.estado === "exito") {
     establecerEtapa("crear_productos");
-    progresoCarga.actualizar(
-      "Creando productos en Rappi",
-      "Las imágenes se procesaron. Rappi está registrando los productos."
-    );
-    try {
-      await continuarYCcrearProductos();
-    } finally {
-      progresoCarga.quitar();
-    }
+    await continuarYCcrearProductos();
     return {
       paso: "productos_creados_pendiente_asociacion",
       mensaje: `Rappi procesó las imágenes y creó los productos. La asociación queda pendiente para que la realices por separado. ${traza}`,
     };
   }
-  progresoCarga.quitar();
   if (r.estado === "pagina_404") {
     // Rappi muestra esta pantalla como una falla visual de su propia
     // app justo después de recibir el ZIP, pero el archivo sí se sube
@@ -454,7 +412,6 @@ async function subirImagenes(
     // espera de un minuto (ver revisarReintento404AlCargar arriba),
     // que vuelve a comprobar una vez si la vista sigue rota.
     sessionStorage.setItem(CLAVE_REINTENTO_404, "1");
-    mostrarProgresoEsperaRecarga();
     timerReintento404 = setTimeout(() => location.reload(), ESPERAS_REINTENTO_404_MS[0]);
     return {
       paso: "imagenes_pagina_404",
@@ -471,145 +428,6 @@ async function subirImagenes(
     paso: "imagenes_sin_terminar",
     mensaje: `Pasaron ${r.segundos}s (10 min máx.) y Rappi no mostró éxito ni error. ${traza}`,
   };
-}
-
-// El fondo opaco cubre toda la pestaña, incluida la brújula y el mensaje
-// de la vista 404 de Rappi. No modifica el contenido ni oculta un error
-// definitivo: la pantalla se retira al terminar, fallar o agotar el reintento.
-function crearPantallaProgreso(tituloInicial, detalleInicial) {
-  const overlay = document.createElement("div");
-  overlay.setAttribute("data-panafargo-progreso", "");
-  overlay.setAttribute("role", "status");
-  overlay.setAttribute("aria-live", "polite");
-  Object.assign(overlay.style, {
-    position: "fixed",
-    inset: "0",
-    zIndex: "2147483647",
-    display: "grid",
-    placeItems: "center",
-    boxSizing: "border-box",
-    padding: "clamp(16px, 4vw, 48px)",
-    overflow: "auto",
-    background: "#f4f6fa",
-    pointerEvents: "auto",
-  });
-
-  const tarjeta = document.createElement("div");
-  Object.assign(tarjeta.style, {
-    boxSizing: "border-box",
-    width: "min(780px, 100%)",
-    minWidth: "0",
-    minHeight: "320px",
-    padding: "clamp(24px, 5vw, 56px)",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    border: "1px solid #d8dee8",
-    borderRadius: "18px",
-    background: "#fff",
-    boxShadow: "0 16px 48px rgba(15, 23, 42, 0.14)",
-    color: "#222",
-    font: "18px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    textAlign: "center",
-  });
-
-  const titulo = document.createElement("div");
-  titulo.textContent = tituloInicial;
-  Object.assign(titulo.style, {
-    fontSize: "clamp(22px, 3vw, 28px)",
-    lineHeight: "1.3",
-    fontWeight: "600",
-    overflowWrap: "anywhere",
-  });
-
-  const detalle = document.createElement("div");
-  detalle.textContent = detalleInicial;
-  detalle.style.margin = "16px 0 28px";
-
-  const pista = document.createElement("div");
-  Object.assign(pista.style, {
-    height: "30px",
-    flexShrink: "0",
-    overflow: "hidden",
-    borderRadius: "999px",
-    background: "#e5e7eb",
-  });
-  pista.setAttribute("role", "progressbar");
-
-  const progreso = document.createElement("div");
-  Object.assign(progreso.style, {
-    width: "0%",
-    height: "100%",
-    borderRadius: "inherit",
-    background: "#2c7be5",
-  });
-  pista.appendChild(progreso);
-  tarjeta.append(titulo, detalle, pista);
-  overlay.appendChild(tarjeta);
-  document.body.appendChild(overlay);
-
-  return { overlay, titulo, detalle, pista, progreso };
-}
-
-function mostrarProgresoCargaImagenes() {
-  const { overlay, titulo, detalle, pista, progreso } = crearPantallaProgreso(
-    "Cargando imágenes para crear productos",
-    "Rappi está procesando las imágenes. Esta operación puede tardar varios minutos."
-  );
-  pista.setAttribute("aria-label", "Rappi está procesando las imágenes");
-  pista.setAttribute("aria-valuetext", "Procesando imágenes");
-  progreso.style.width = "38%";
-  const animacion = progreso.animate(
-    [{ transform: "translateX(-110%)" }, { transform: "translateX(270%)" }],
-    { duration: 1300, iterations: Infinity, easing: "ease-in-out" }
-  );
-
-  return {
-    actualizar(nuevoTitulo, nuevoDetalle) {
-      titulo.textContent = nuevoTitulo;
-      detalle.textContent = nuevoDetalle;
-      pista.setAttribute("aria-label", nuevoTitulo);
-      pista.setAttribute("aria-valuetext", nuevoDetalle);
-    },
-    quitar() {
-      animacion.cancel();
-      overlay.remove();
-    },
-  };
-}
-
-function mostrarProgresoEsperaRecarga() {
-  clearInterval(intervaloProgresoReintento404);
-  barraProgresoReintento404?.remove();
-  const { overlay, pista, progreso } = crearPantallaProgreso(
-    "Preparando la creación de productos",
-    "Espera mientras Rappi procesa las imágenes. Mi Tienda se actualizará automáticamente al terminar esta espera."
-  );
-  pista.setAttribute("aria-label", "Tiempo de espera antes de actualizar Mi Tienda");
-  pista.setAttribute("aria-valuemin", "0");
-  pista.setAttribute("aria-valuemax", "100");
-
-  progreso.style.transition = "width 250ms linear";
-  barraProgresoReintento404 = overlay;
-
-  const inicio = Date.now();
-  const actualizarProgreso = () => {
-    const proporcion = Math.min(
-      1,
-      (Date.now() - inicio) / DURACION_BARRA_REINTENTO_404_MS
-    );
-    const porcentaje = Math.floor(proporcion * 100);
-    progreso.style.width = `${porcentaje}%`;
-    pista.setAttribute("aria-valuenow", String(porcentaje));
-
-    if (proporcion === 1) {
-      clearInterval(intervaloProgresoReintento404);
-      intervaloProgresoReintento404 = null;
-    }
-  };
-
-  actualizarProgreso();
-  intervaloProgresoReintento404 = setInterval(actualizarProgreso, 250);
 }
 
 async function continuarYCcrearProductos() {
