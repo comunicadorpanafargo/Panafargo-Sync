@@ -1,6 +1,8 @@
 # Imágenes de SKU con `/`: causa, contrato y comprobación
 
-Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.5.
+Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.6.
+
+En 4.1.6 se retiró exclusivamente la pantalla de espera de la extensión. Mi Tienda queda visible durante todas las fases; el procesamiento, los clics de creación y sus tiempos no se modificaron. La investigación general de imágenes está en [investigacion-subida-imagenes-rappi.md](investigacion-subida-imagenes-rappi.md). Esta retirada visual no se presenta como una reparación del servicio de imágenes de Rappi.
 
 ## Problema reproducido
 

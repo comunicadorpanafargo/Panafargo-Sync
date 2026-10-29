@@ -134,6 +134,7 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   vm.runInContext(contenido, contexto, { filename: "mi-tienda-content-script.js" });
   const esperarEstadoReal = contexto.esperarEstadoDelFlujo;
   const continuarCrearReal = contexto.continuarYCcrearProductos;
+  const subirImagenesReal = contexto.subirImagenes;
   const input = {};
   // Simular solo las fronteras de DOM/espera. El manejador real del mensaje
   // decide si está permitido cargar imágenes, crear o detener el flujo.
@@ -153,7 +154,7 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   const enviar = (datos) => new Promise((resolve) => {
     receptor({ tipo: "RAPPI_SUBIR_LOTE", ...datos }, {}, resolve);
   });
-  return { contexto, operaciones, enviar, sesion, local, intervalos, esperarEstadoReal, continuarCrearReal, pantallas };
+  return { contexto, operaciones, enviar, sesion, local, intervalos, esperarEstadoReal, continuarCrearReal, subirImagenesReal, pantallas };
 }
 
 const plantilla = { xlsxBase64: "AA==", xlsxNombre: "lote-prueba.xlsx" };
@@ -170,26 +171,35 @@ const imagenesPorFila = {
 describe("Subida a Mi Tienda sin usar un lote anterior", () => {
   test("las imágenes por SKU se confirman antes de crear, sin usar el ZIP", async () => {
     const { contexto, enviar, operaciones, pantallas } = crearContenido();
+    let confirmarImagenes;
     contexto.PanafargoImagenesPorSku = {
       validar: (imagenes, skus) => {
         assert.deepEqual(Array.from(skus), imagenesPorFila.skus);
         return { skus, imagenes };
       },
-      asignar: async (paquete, { alProgreso }) => {
+      asignar: async (paquete, { alProgreso } = {}) => {
         operaciones.push(["imagenes_sku", Array.from(paquete.skus)]);
-        alProgreso({ sku: paquete.skus[1], completadas: 2, total: 2 });
+        alProgreso?.({ sku: paquete.skus[1], completadas: 1, total: 2 });
+        await new Promise((resolve) => { confirmarImagenes = resolve; });
         return { skus: paquete.skus, imagenesSubidas: 2 };
       },
     };
-    const resultado = await enviar(imagenesPorFila);
+    const pendiente = enviar(imagenesPorFila);
+    await new Promise(setImmediate);
+    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["imagenes_sku", imagenesPorFila.skus]]);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, true);
+    assert.equal(pantallas.size, 0, "La carga conserva el bloqueo sin cubrir la página de Rappi.");
+    confirmarImagenes();
+    const resultado = await pendiente;
     assert.equal(resultado.ok, true);
     assert.equal(resultado.paso, "productos_creados_pendiente_asociacion");
     assert.equal(resultado.imagenesSubidas, 2);
     assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["imagenes_sku", imagenesPorFila.skus], ["crear"]]);
     assert.equal(pantallas.size, 0);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
   });
 
-  test("si una imagen no se confirma no crea productos y retira la espera", async () => {
+  test("si una imagen no se confirma informa el fallo, no crea productos y libera el bloqueo", async () => {
     const { contexto, enviar, operaciones, pantallas } = crearContenido();
     contexto.PanafargoImagenesPorSku = {
       validar: (_imagenes, skus) => ({ skus }),
@@ -200,6 +210,7 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.match(resultado.error, /67890\/hola/);
     assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"]]);
     assert.equal(pantallas.size, 0);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
   });
 
   test("una revisión anterior exige refrescar y no ofrece retomar ni modifica el lote", async () => {
@@ -450,12 +461,30 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     });
   }
 
-  test("el flujo normal de una plantilla nueva conserva la carga automática del ZIP", async () => {
-    const { enviar, operaciones } = crearContenido();
-    const resultado = await enviar({ ...plantilla, imagenesZipBase64: "ZIP-NUEVO" });
+  test("el flujo normal espera el procesamiento real del ZIP antes de crear sin cubrir Mi Tienda", async () => {
+    const { contexto, enviar, operaciones, subirImagenesReal, pantallas } = crearContenido();
+    const inputZip = {};
+    let confirmarZip;
+    contexto.subirImagenes = subirImagenesReal;
+    contexto.esperarElementoPorTexto = async () => ({ click: () => operaciones.push(["abrir_zip"]) });
+    contexto.esperarSelector = async () => inputZip;
+    contexto.asignarArchivosAInput = (input, archivos) => operaciones.push([input === inputZip ? "imagenes_zip" : "plantilla", archivos[0].name]);
+    contexto.esperarArchivosAsignados = async () => true;
+    contexto.esperarResultadoProcesamientoZip = async () => new Promise((resolve) => { confirmarZip = resolve; });
+    const pendiente = enviar({ ...plantilla, imagenesZipBase64: btoa("zip-sintetico"), imagenesZipNombre: "imagenes-prueba.zip" });
+    await new Promise(setImmediate);
+    const antesDeCrear = [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["abrir_zip"], ["imagenes_zip", "imagenes-prueba.zip"]];
+    assert.deepEqual(operaciones, antesDeCrear);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, true);
+    assert.equal(pantallas.size, 0);
+    confirmarZip({ estado: "exito", progresos: [], segundos: 1, cambioUrl: null });
+    const resultado = await pendiente;
     assert.equal(resultado.ok, true);
-    assert.equal(resultado.paso, "zip_simulado");
-    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["zip", "ZIP-NUEVO"]]);
+    assert.equal(resultado.paso, "productos_creados_pendiente_asociacion");
+    assert.match(resultado.mensaje, /creó los productos/);
+    assert.deepEqual(operaciones, [...antesDeCrear, ["crear"]]);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
+    assert.equal(pantallas.size, 0);
   });
 
   test("una plantilla que no supera la validación no carga ZIP ni crea productos", async () => {
@@ -506,8 +535,9 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
   test("la continuación tras recarga conserva el bloqueo hasta terminar y no confirma la asociación", async () => {
     const { contexto, enviar, operaciones, sesion, intervalos, pantallas } = crearContenido("plantilla", { recuperacion: true });
     assert.equal(sesion.has("panafargoSync:zipReloadIntento"), false);
-    assert.equal(pantallas.size, 1, "La espera sigue cubierta tras actualizar Mi Tienda.");
+    assert.equal(pantallas.size, 0, "Mi Tienda permanece visible durante la recuperación.");
     assert.equal((await enviar(imagenesManuales)).ok, false);
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, true);
     let confirmarPantallaAsociacion;
     contexto.buscarBotonPorTexto = () => ({ disabled: false, click: () => operaciones.push(["crear_tras_recarga"]) });
     contexto.esperarBotonPorTexto = () => new Promise((resolve) => { confirmarPantallaAsociacion = resolve; });
@@ -517,23 +547,28 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.equal((await enviar(imagenesManuales)).ok, false, "El indicador de sesión ya se retiró, pero la continuación sigue activa.");
     confirmarPantallaAsociacion({ click: () => operaciones.push(["asociar"]) });
     await new Promise(setImmediate);
-    assert.equal(pantallas.size, 0, "La pantalla de espera se retira al confirmar el resultado.");
+    assert.equal(pantallas.size, 0);
+    assert.equal(sesion.has("panafargoSync:creacionPendiente"), false, "La creación confirmada retira su marca igual que antes.");
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
     assert.equal((await enviar(imagenesManuales)).ok, true);
     assert.equal(operaciones.some(([accion]) => accion === "asociar"), false);
   });
 
-  test("si falla la continuación tras recarga, se retira la espera y se libera el bloqueo", async () => {
-    const { contexto, enviar, operaciones, intervalos, pantallas } = crearContenido("plantilla", { recuperacion: true });
+  test("si falla la continuación tras recarga informa el error y libera el bloqueo sin cubrir Mi Tienda", async () => {
+    const { contexto, enviar, operaciones, sesion, intervalos, pantallas } = crearContenido("plantilla", { recuperacion: true });
     const errores = [];
     contexto.console = { ...console, error: (...args) => errores.push(args) };
     contexto.buscarBotonPorTexto = () => ({ disabled: false, click: () => operaciones.push(["crear_tras_recarga"]) });
     contexto.esperarBotonPorTexto = async () => { throw new Error("No se confirmó la creación"); };
-    assert.equal(pantallas.size, 1);
+    assert.equal(pantallas.size, 0);
     intervalos[0]();
     await new Promise(setImmediate);
-    assert.equal(pantallas.size, 0, "El error real de Mi Tienda vuelve a ser visible.");
+    assert.equal(pantallas.size, 0, "El error real de Mi Tienda permanece visible.");
+    assert.deepEqual(operaciones, [["crear_tras_recarga"]]);
     assert.equal(errores.length, 1);
     assert.match(errores[0][1].message, /No se confirmó la creación/);
+    assert.equal(sesion.has("panafargoSync:creacionPendiente"), true, "El fallo conserva la protección contra repetir Crear.");
+    assert.equal((await enviar({ tipo: "RAPPI_ESTADO_CARGA" })).cargaEnCurso, false);
     assert.equal((await enviar(imagenesManuales)).ok, true);
     assert.equal(operaciones.some(([accion]) => accion === "asociar"), false);
   });

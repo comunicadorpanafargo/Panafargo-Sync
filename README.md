@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1.5
+# Panafargo Sync 4.1.6
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -45,7 +45,7 @@ Las publicaciones listas se seleccionan automáticamente y las elecciones se con
 - **Refrescar Rappi** descarta el borrador anterior de Mi Tienda y abre la entrada oficial para una plantilla nueva. Borra selección, mensajes y plantilla de asociación locales; vuelve a mostrar los productos fuente desmarcados. Conserva los productos, conteos, contexto, equivalencias y credenciales de Shopify, y la sesión de Rappi. No elimina productos ya creados en el servidor.
 - Se retiraron **Retomar lote abierto** y los dos botones separados de descarga y preparación. Si todavía existe una revisión anterior, usa **Refrescar Rappi** antes de crear otro lote.
 - No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
-- Durante el procesamiento y la creación, una pantalla de espera opaca cubre la pestaña completa. Si aparece el fallo temporal de «página no encontrada», muestra la espera antes de la actualización automática. Esa barra representa el tiempo de espera, no una confirmación de productos creados; si falla la recuperación, se retira para permitir revisar el error.
+- Mi Tienda permanece visible durante la subida, el procesamiento y la creación. Desde 4.1.6 se retiró la pantalla de espera de la extensión para poder observar los mensajes y controles nativos de Rappi. La recuperación automática existente conserva sus tiempos y su recorrido.
 - Refrescar comprueba todas las pestañas de Mi Tienda antes de descartar el borrador. Si hay una operación activa o no puede confirmar la versión y el estado de una pestaña, detiene la limpieza. Una pestaña que siga ejecutando código antiguo debe actualizarse con F5 tras recargar la extensión.
 
 ### Imágenes de SKU con `/`
@@ -58,7 +58,7 @@ La URL de la foto rota compartida por el usuario permitió comprobar que la imag
 
 En 4.1.5, los archivos enviados a ese control usan nombres ASCII derivados mediante SHA-256 del SKU completo, sin `/` ni `%`. Esto elimina la ambigüedad de `%2F` en el nombre y conserva intactos el SKU del producto y su asociación. Si una vista previa nueva tarda en estar disponible, se vuelve a consultar hasta tres veces, tras 1, 2 y 4 segundos. Esperar sin volver a solicitar una imagen rota no provocaba otra descarga. No se vuelve a subir el archivo ni se acepta una imagen anterior como confirmación.
 
-Si falta un SKU, hay duplicados, cambian las filas, falla una imagen o no se puede confirmar su carga, no pulsa **Crear productos**. La cabecera muestra cuántas imágenes se han confirmado. La foto de cada diseño procede de su publicación de Shopify; no se suman ni comparten existencias. WebP se recodifica a JPEG para este recorrido; los adjuntos son JPG/PNG de hasta 1 MB.
+Si falta un SKU, hay duplicados, cambian las filas, falla una imagen o no se puede confirmar su carga, no pulsa **Crear productos**. Los mensajes de resultado o error indican cuántas imágenes se confirmaron. La foto de cada diseño procede de su publicación de Shopify; no se suman ni comparten existencias. WebP se recodifica a JPEG para este recorrido; los adjuntos son JPG/PNG de hasta 1 MB.
 
 **Crear productos** descarga automáticamente el respaldo, con nombres seguros y mapas CSV/JSON que conservan el SKU completo. Las fotos se cargan automáticamente; no hay que extraerlas ni asignarlas a mano. **No subas ese ZIP de respaldo a Mi Tienda.** Las fuentes del contrato, los selectores y los límites de comprobación están en [docs/rappi-imagenes-por-sku.md](docs/rappi-imagenes-por-sku.md). La comparación de versiones y los elementos esenciales conservados están en [docs/auditoria-4.1.4.md](docs/auditoria-4.1.4.md). Las pruebas locales y el código público no demuestran que una cuenta privada haya publicado productos.
 
