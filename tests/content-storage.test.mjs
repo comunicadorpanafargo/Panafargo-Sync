@@ -464,6 +464,11 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
   test("el flujo normal espera el procesamiento real del ZIP antes de crear sin cubrir Mi Tienda", async () => {
     const { contexto, enviar, operaciones, subirImagenesReal, pantallas } = crearContenido();
     const inputZip = {};
+    const drawer = { getClientRects: () => [{}], querySelectorAll: () => [inputZip] };
+    const panel = { getClientRects: () => [{}], querySelectorAll: () => [drawer] };
+    inputZip.closest = (selector) => selector === "app-handle-images-actions" ? panel : drawer;
+    contexto.getComputedStyle = () => ({ visibility: "visible" });
+    contexto.document.querySelectorAll = (selector) => selector === "app-handle-images-actions" ? [panel] : [];
     let confirmarZip;
     contexto.subirImagenes = subirImagenesReal;
     contexto.esperarElementoPorTexto = async () => ({ click: () => operaciones.push(["abrir_zip"]) });
