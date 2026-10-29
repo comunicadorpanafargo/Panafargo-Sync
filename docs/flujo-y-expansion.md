@@ -12,7 +12,7 @@ Las capturas aportadas se revisaron. El MP4 y el ZIP de la grabación superaron 
 
 ## Botones necesarios y acciones secundarias
 
-El camino principal de la extensión es **Buscar y validar → Crear productos → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda; no requiere otro clic de guardado. La creación y la confirmación final de asociación siguen siendo pasos distintos. Con SKU que incluyen `/`, las imágenes se asignan automáticamente a sus filas por el SKU completo, usando el control individual confirmado en el frontend público de Rappi.
+El camino principal es **Buscar y validar → Crear productos → seleccionar la plantilla recibida → Descargar precios y existencias**. Elegir la plantilla ya la valida y guarda. La creación y la confirmación final de asociación siguen siendo pasos distintos. Desde 4.1.7 se usa el ZIP masivo con principal y todas las secundarias; los SKU con `/` quedan pendientes y deben desmarcarse para crear los demás.
 
 | Control actual | Utilidad | Decisión recomendada |
 | --- | --- | --- |
@@ -51,13 +51,13 @@ Se mantiene un único cálculo de precio, la reserva existente y las plantillas 
 
 ## Límites que deben verificarse en Rappi
 
-El SKU con `/` se conserva en Excel y en la asociación. El algoritmo privado que vincula nombres de ZIP no está confirmado para estos identificadores; codificar el nombre local no demuestra compatibilidad del importador. La versión 4.1.2 usa el control de imagen de cada fila, cuya identidad interna se confirmó en el frontend público de Rappi. Comprueba todos los SKU de todas las páginas antes de adjuntar imágenes y confirma la imagen nueva antes de crear. El respaldo ZIP sigue siendo exclusivamente local. Las fuentes y límites están en [rappi-imagenes-por-sku.md](rappi-imagenes-por-sku.md).
+El SKU con `/` se conserva en consultas, inventario y asociación. El algoritmo privado que vincula nombres de ZIP no está confirmado para esos identificadores. En 4.1.7 su creación queda pendiente y se prioriza el recorrido masivo de los demás SKU, con todas sus fotos. El ZIP descargado ahora sí es el importable enviado a Mi Tienda. La comparación y sus límites están en [carga-masiva-rappi-4.1.7.md](carga-masiva-rappi-4.1.7.md); [rappi-imagenes-por-sku.md](rappi-imagenes-por-sku.md) conserva la investigación histórica del recorrido individual.
 
 No se reanuda una revisión antigua con imágenes de un lote nuevo. Se rechazan cargas simultáneas o durante el reintento activo de Rappi. Se conserva la confirmación final de asociación en el portal.
 
 ## Próximas mejoras por prioridad
 
-1. **Comprobar el recorrido por diseño en una cuenta real.** La automatización por fila está implementada y probada con un DOM derivado del frontend público. Queda verificarla con una sesión autorizada y un lote pequeño revisado, además de mantener los selectores si Rappi cambia la interfaz. No confundir estos ensayos locales con publicaciones reales ya realizadas.
+1. **Comprobar principal y secundarias del ZIP en una cuenta real.** Verificar un lote pequeño antes de aumentar el volumen. El recorrido de `/` queda pendiente. No confundir ensayos locales con publicaciones reales ya realizadas.
 2. **Historial de trabajos y prevención de reenvíos.** Identificador de lote, estado por publicación y comprobación del resultado antes de permitir repetir una creación. Requiere una señal fiable del portal; una descarga o un botón pulsado no prueba publicación.
 3. **Reintentos por fallos recuperables.** Reintentar imágenes o consultas fallidas con límites, evitando repetir creaciones ya confirmadas. Mostrar fase y pendientes, con cancelación segura antes de enviar.
 4. **Importación de inventario con reglas explícitas.** Si se incorpora Webcol, solo actualizar referencias base autorizadas. Una fila base nunca debe sobrescribir el conteo manual de un SKU con `/`; cualquier actualización de Shopify debe ser una operación separada y revisable.

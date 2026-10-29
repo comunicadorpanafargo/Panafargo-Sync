@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1.6
+# Panafargo Sync 4.1.7
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -26,7 +26,7 @@ Solo el texto anterior a la primera `/` se usa para comparar y contar productos 
 3. En Chrome, abre `chrome://extensions`, activa el modo desarrollador y carga esta carpeta como extensión descomprimida.
 4. Abre Panafargo Sync desde su icono. Las bibliotecas de Excel y ZIP ya están incluidas; la extensión no necesita una instalación con npm.
 
-Al actualizar la extensión, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera de la ventana permite comprobar la versión instalada. La carga por SKU comprueba que la pestaña tenga activo el código nuevo antes de enviar el lote.
+Al actualizar la extensión, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera permite comprobar la versión instalada y el envío exige la misma versión en Mi Tienda. Vuelve a **Buscar y validar** los productos guardados por versiones anteriores: sus galerías estaban limitadas a dos fotos y no se usan para crear un lote incompleto.
 
 ## Flujo para el usuario
 
@@ -40,27 +40,23 @@ El resumen distingue productos base, publicaciones, listas y pendientes. Una bas
 
 Las publicaciones listas se seleccionan automáticamente y las elecciones se conservan por SKU completo. Puedes desmarcar las que no quieres incluir. Los bloqueos siguen visibles y no pueden seleccionarse.
 
-- **Crear productos:** genera una sola vez el Excel de creación y las imágenes. Descarga el Excel y el ZIP de respaldo, espera a que Chrome confirme ambas descargas completas y entonces inicia el recorrido de Rappi. Si se cancela o falla una descarga, no envía el lote. Debes tener tu sesión iniciada en Mi Tienda.
-- Las fotos se cargan automáticamente. Los lotes sin separadores conservan el ZIP automático; si hay SKU con `/`, la extensión carga cada foto en la fila de su SKU completo. El respaldo contiene exactamente las imágenes preparadas para ese envío, sin descargarlas otra vez. Solo después de confirmar las imágenes se continúa con la creación, sin confirmar la asociación final.
+- **Crear productos:** genera una sola vez el Excel y el ZIP de carga masiva. Espera que Chrome confirme ambas descargas completas y entonces abre **Cárgalas aquí** en Rappi y adjunta ese mismo ZIP automáticamente. Si falla una descarga, no envía el lote. Debes tener tu sesión iniciada en Mi Tienda.
+- El ZIP incluye la principal como `SKU.ext` y todas las secundarias de Shopify como `SKU_1.ext`, `SKU_2.ext`, etc. Las secundarias son obligatorias cuando existen: una foto fallida detiene la preparación e identifica SKU y posición, sin omitirla. No se exige inventar una secundaria si Shopify solo tiene una foto. La galería se consulta hasta su última página.
+- Se observa el procesamiento nativo antes de continuar con la creación existente. El 100 % de transferencia o un botón Continuar habilitado no se toman como éxito. Se muestran los errores de procesamiento del panel actual y se conserva la asociación final como tarea independiente.
+- Los SKU con `/` o `\\` quedan **pendientes** en esta entrega: desmárcalos para crear los demás. No desvían el lote a la carga individual ni cambian de código.
 - **Refrescar Rappi** descarta el borrador anterior de Mi Tienda y abre la entrada oficial para una plantilla nueva. Borra selección, mensajes y plantilla de asociación locales; vuelve a mostrar los productos fuente desmarcados. Conserva los productos, conteos, contexto, equivalencias y credenciales de Shopify, y la sesión de Rappi. No elimina productos ya creados en el servidor.
 - Se retiraron **Retomar lote abierto** y los dos botones separados de descarga y preparación. Si todavía existe una revisión anterior, usa **Refrescar Rappi** antes de crear otro lote.
 - No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
 - Mi Tienda permanece visible durante la subida, el procesamiento y la creación. Desde 4.1.6 se retiró la pantalla de espera de la extensión para poder observar los mensajes y controles nativos de Rappi. La recuperación automática existente conserva sus tiempos y su recorrido.
 - Refrescar comprueba todas las pestañas de Mi Tienda antes de descartar el borrador. Si hay una operación activa o no puede confirmar la versión y el estado de una pestaña, detiene la limpieza. Una pestaña que siga ejecutando código antiguo debe actualizarse con F5 tras recargar la extensión.
 
-### Imágenes de SKU con `/`
+### Estado de las imágenes
 
-El Excel conserva `11351/MoveForward` tal cual. En cambio, `/` es un separador de carpetas dentro de un ZIP: `34534/hola.jpg` tiene como nombre final `hola.jpg`. **No se inventa que Rappi decodifique un nombre alternativo.**
+La versión 4.1.7 recupera el recorrido masivo de 4.0.0 para los SKU compatibles y conserva el diseño actual. El ZIP descargado sí es importable y solo contiene fotos con los nombres esperados por Rappi; no es el antiguo respaldo con mapas y nombres hash. Se mantienen JPG/PNG/WEBP de hasta 1 MB por imagen, sin ampliar artificialmente las fotos.
 
-El frontend público de Mi Tienda permite adjuntar una imagen directamente a una fila, usando sus identificadores internos de producto y archivo. La extensión utiliza ese control para los lotes con `/`: primero recorre todas las páginas y comprueba que cada SKU completo aparezca exactamente una vez; después asigna la imagen principal de cada publicación en una segunda pasada. Comprueba una URL de imagen nueva y cargada y la ausencia del indicador de procesamiento. No usa el nombre del archivo para decidir a qué producto pertenece.
+El tratamiento automático de `/` queda pendiente por decisión del usuario. Esos SKU siguen disponibles para consulta, inventario y asociación por su código completo; no se crea un lote nuevo con ellos desde este botón. Los módulos experimentales individuales se conservan para la investigación, fuera del recorrido de la interfaz.
 
-La URL de la foto rota compartida por el usuario permitió comprobar que la imagen **sí llegó a Rappi**: se recuperó el PNG original con el mismo SHA-256 que la foto de Shopify. Las respuestas cambiaban según la codificación de la ruta y el tamaño solicitado; la vista previa respondió correctamente en una consulta posterior. La evidencia apunta a un problema de lectura de la imagen, con ambigüedad de codificación y posible fallo transitorio del CDN; no demuestra que esa vista previa falle permanentemente.
-
-En 4.1.5, los archivos enviados a ese control usan nombres ASCII derivados mediante SHA-256 del SKU completo, sin `/` ni `%`. Esto elimina la ambigüedad de `%2F` en el nombre y conserva intactos el SKU del producto y su asociación. Si una vista previa nueva tarda en estar disponible, se vuelve a consultar hasta tres veces, tras 1, 2 y 4 segundos. Esperar sin volver a solicitar una imagen rota no provocaba otra descarga. No se vuelve a subir el archivo ni se acepta una imagen anterior como confirmación.
-
-Si falta un SKU, hay duplicados, cambian las filas, falla una imagen o no se puede confirmar su carga, no pulsa **Crear productos**. Los mensajes de resultado o error indican cuántas imágenes se confirmaron. La foto de cada diseño procede de su publicación de Shopify; no se suman ni comparten existencias. WebP se recodifica a JPEG para este recorrido; los adjuntos son JPG/PNG de hasta 1 MB.
-
-**Crear productos** descarga automáticamente el respaldo, con nombres seguros y mapas CSV/JSON que conservan el SKU completo. Las fotos se cargan automáticamente; no hay que extraerlas ni asignarlas a mano. **No subas ese ZIP de respaldo a Mi Tienda.** Las fuentes del contrato, los selectores y los límites de comprobación están en [docs/rappi-imagenes-por-sku.md](docs/rappi-imagenes-por-sku.md). La comparación de versiones y los elementos esenciales conservados están en [docs/auditoria-4.1.4.md](docs/auditoria-4.1.4.md). Las pruebas locales y el código público no demuestran que una cuenta privada haya publicado productos.
+La comparación histórica, el alcance y las recomendaciones están en [docs/carga-masiva-rappi-4.1.7.md](docs/carga-masiva-rappi-4.1.7.md). Las pruebas locales y el frontend público no demuestran una subida real en la cuenta privada; esa verificación debe hacerse observando un lote pequeño en Mi Tienda.
 
 ### 3. Asociar
 

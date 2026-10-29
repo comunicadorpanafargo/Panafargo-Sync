@@ -2,6 +2,8 @@
 
 Revisión del 29 de octubre de 2026. Base investigada: 4.1.5 (`3ec6505`). Cambio de 4.1.6: retirar la pantalla superpuesta de Panafargo Sync para observar Mi Tienda. La lógica de creación se conserva; esta investigación no modifica los métodos de subida ni declara reparado el servicio de imágenes.
 
+**Actualización 4.1.7:** se recupera el ZIP masivo, se exigen todas las secundarias, se completa la galería paginada, se rechazan respuestas sin firma de imagen y el detector observa errores visibles del panel actual antes del éxito. El recorrido individual queda fuera de la interfaz y `/` pendiente. La tabla siguiente conserva los hallazgos sobre 4.1.5; no debe interpretarse como una descripción de todos los comportamientos actuales. Consulta [carga-masiva-rappi-4.1.7.md](carga-masiva-rappi-4.1.7.md).
+
 ## Qué se conservó y qué queda visible
 
 `continuarYCcrearProductos` mantiene exactamente el mismo cuerpo. Se conservan también las esperas, el bloqueo de envíos simultáneos, las marcas, el reintento de recarga de 60 segundos y los mensajes de respuesta. Se retiraron únicamente la capa opaca, las barras, sus animaciones y las llamadas que actualizaban esos elementos.

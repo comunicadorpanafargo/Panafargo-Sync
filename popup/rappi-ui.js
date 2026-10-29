@@ -1,7 +1,7 @@
 // Preparación guiada de publicaciones. El SKU completo identifica cada fila.
 import { prepararParaRappi } from "../rappi/rappi-connector.js";
 import { generarXlsxLoteRappi, blobABase64 } from "../rappi/rappi-batch.js";
-import { construirZipImagenes, construirPaqueteImagenesLocalesDesdePreparadas, prepararImagenesIndividualesPorSku } from "../rappi/rappi-images-zip.js";
+import { construirZipImagenes } from "../rappi/rappi-images-zip.js";
 import { generarPlantillaAsociacion, calcularUnidadesDisponiblesAsociacion, extraerSkuCompletoAsociacion } from "../rappi/rappi-association.js";
 import { obtenerProductos, limpiarPreparacionRappi } from "../storage/storage.js";
 import { obtenerSkuBase } from "../utils/sku.js";
@@ -23,7 +23,7 @@ let inicializado = false;
 let ocupacionNotificada;
 const el = (id) => document.getElementById(id);
 const seleccionadas = () => filas.filter((fila) => fila.resultado.ok && fila.seleccionada);
-const imagenesManuales = (lista) => lista.some(({ producto }) => /[\/\\]/.test(producto.sku));
+const tieneSkuConSeparador = (lista) => lista.some(({ producto }) => /[\/\\]/.test(producto.sku));
 const estaOcupado = () => ocupado || Boolean(cargaActual) || Boolean(restauracionActual);
 
 export function initRappiTab() {
@@ -160,14 +160,15 @@ function actualizarControles() {
   for (const id of ["btn-subir-mi-tienda", "btn-descargar-plantilla-asociacion-generada"]) {
     el(id).disabled = bloqueado || lista.length === 0;
   }
+  el("btn-subir-mi-tienda").disabled ||= tieneSkuConSeparador(lista);
   el("input-plantilla-asociacion").disabled = bloqueado;
   el("btn-refrescar-rappi").disabled = bloqueado;
   el("lista-rappi").querySelectorAll('input[type="checkbox"]').forEach((checkbox, indice) => {
     checkbox.disabled = bloqueado || !filas[indice]?.resultado.ok;
   });
   const aviso = el("aviso-imagenes-disenos");
-  aviso.hidden = !imagenesManuales(lista);
-  aviso.textContent = "Las fotos de cada diseño se cargarán automáticamente en su producto. El Excel y el ZIP de respaldo también se descargan automáticamente. El ZIP es solo una copia de respaldo; no debes subirlo a Mi Tienda.";
+  aviso.hidden = !tieneSkuConSeparador(lista);
+  aviso.textContent = "La carga masiva de imágenes para SKU con / o \\ queda pendiente. Desmarca esas publicaciones para crear las demás con todas sus fotos mediante el ZIP de Rappi. Se conserva el SKU completo y no se cambia el inventario de ningún diseño.";
   if (bloqueado !== ocupacionNotificada) {
     ocupacionNotificada = bloqueado;
     window.dispatchEvent(new CustomEvent("panafargo:ocupado", { detail: { ocupado: bloqueado, origen: "rappi" } }));
@@ -275,7 +276,7 @@ function guardarSeleccion() {
   return guardadoSeleccion;
 }
 
-async function comprobarDisponibilidadMiTienda(tab, porSku, { esperarInicio = false } = {}) {
+async function comprobarDisponibilidadMiTienda(tab, { esperarInicio = false } = {}) {
   let estado;
   const limite = Date.now() + 5000;
   do {
@@ -283,7 +284,8 @@ async function comprobarDisponibilidadMiTienda(tab, porSku, { esperarInicio = fa
     if (estado || !esperarInicio || Date.now() >= limite) break;
     await new Promise((resolve) => setTimeout(resolve, 150));
   } while (Date.now() < limite);
-  if (!estado?.ok || typeof estado.cargaEnCurso !== "boolean" || (porSku && !estado.imagenesPorSku)) {
+  if (!estado?.ok || typeof estado.cargaEnCurso !== "boolean"
+    || estado.versionExtension !== chrome.runtime.getManifest().version) {
     throw new Error("Recarga la pestaña de Mi Tienda (F5) después de actualizar la extensión para activar el flujo actual. Todavía no se envió el lote.");
   }
   if (estado.cargaEnCurso) throw new Error("Mi Tienda ya está procesando un lote. Espera su resultado antes de enviar otro.");
@@ -294,41 +296,41 @@ async function comprobarDisponibilidadMiTienda(tab, porSku, { esperarInicio = fa
 
 async function prepararEnMiTienda() {
   await tarea("mensaje-rappi", async (lista) => {
-    const porSku = imagenesManuales(lista);
+    if (tieneSkuConSeparador(lista)) {
+      throw new Error("La carga masiva para SKU con / o \\ queda pendiente. Desmarca esas publicaciones y pulsa Crear productos para subir las demás con todas sus imágenes.");
+    }
+    if (lista.some(({ producto }) => producto.imagenes_completas !== true)) {
+      throw new Error("Vuelve a Buscar y validar los productos para confirmar su galería completa de Shopify y evitar subir fotos incompletas. Todavía no se descargó ni se envió el lote.");
+    }
     mensaje("mensaje-rappi", "Comprobando Mi Tienda antes de preparar los archivos…");
     const tabs = await chrome.tabs.query({ url: PATRON_MI_TIENDA });
     let tab = tabs.find((pestana) => esPantallaCreacion(pestana.url)) || tabs[0];
-    if (tab) await comprobarDisponibilidadMiTienda(tab, porSku);
+    if (tab) await comprobarDisponibilidadMiTienda(tab);
 
     mensaje("mensaje-rappi", "Preparando el Excel y las imágenes del lote…");
     const [xlsx, imagenes] = await Promise.all([
       generarXlsxLoteRappi(lista.map((fila) => fila.resultado.rappiProduct)),
-      porSku ? prepararImagenesIndividualesPorSku(lista) : construirZipImagenes(lista),
+      construirZipImagenes(lista),
     ]);
     const lote = `lote_${Date.now()}`;
     const solicitud = {
       tipo: "RAPPI_SUBIR_LOTE", skus: lista.map((fila) => fila.producto.sku),
       xlsxBase64: await blobABase64(xlsx), xlsxNombre: `${lote}.xlsx`,
+      imagenesZipBase64: await blobABase64(imagenes),
+      imagenesZipNombre: `${lote}_imagenes.zip`,
     };
-    if (porSku) {
-      solicitud.imagenesPorSku = imagenes;
-    } else {
-      solicitud.imagenesZipBase64 = await blobABase64(imagenes);
-      solicitud.imagenesZipNombre = `${lote}_imagenes.zip`;
-    }
     // Presupuesto conservador para no sobrepasar el transporte de mensajes
     // con lotes que representan muchas publicaciones por cada base.
     if (new Blob([JSON.stringify(solicitud)]).size > 48 * 1024 * 1024) {
       throw new Error("El lote y sus imágenes son demasiado grandes para enviarlos juntos. Selecciona menos publicaciones y prepara el resto en otro lote.");
     }
-    // El respaldo reutiliza exactamente los bytes que se enviarán al portal.
-    // Ninguna imagen se vuelve a descargar ni a normalizar para el ZIP local.
-    const respaldo = porSku ? await construirPaqueteImagenesLocalesDesdePreparadas(imagenes) : imagenes;
+    // La copia local y la carga masiva usan exactamente el mismo ZIP.
+    // Ninguna imagen se vuelve a descargar ni a normalizar para guardarlo.
     try {
       mensaje("mensaje-rappi", "Descargando el Excel del lote. Esperando a que Chrome confirme la descarga…");
       await descargarBlobYEsperar(xlsx, `Panafargo_Rappi/Lotes/${lote}.xlsx`);
-      mensaje("mensaje-rappi", "Excel descargado. Descargando el respaldo de imágenes y esperando su confirmación…");
-      await descargarBlobYEsperar(respaldo, `Panafargo_Rappi/Imagenes/${porSku ? "respaldo_por_sku" : "imagenes_rappi"}_${lote}.zip`);
+      mensaje("mensaje-rappi", "Excel descargado. Descargando el ZIP de carga masiva con todas las imágenes y esperando su confirmación…");
+      await descargarBlobYEsperar(imagenes, `Panafargo_Rappi/Imagenes/imagenes_rappi_${lote}.zip`);
     } catch (error) {
       throw new Error(`No terminaron correctamente las dos descargas. No se envió el lote ni se crearon productos en Rappi. ${error.message || "Vuelve a intentarlo."}`);
     }
@@ -337,11 +339,11 @@ async function prepararEnMiTienda() {
     // enviar el lote a Mi Tienda. La comprobación anterior fue de solo lectura.
     let esperarInicio = false;
     if (!tab) {
-      mensaje("mensaje-rappi", "Excel y respaldo descargados. Abriendo Mi Tienda para crear los productos…");
+      mensaje("mensaje-rappi", "Excel y ZIP descargados. Abriendo Mi Tienda para crear los productos…");
       tab = await abrirMiTiendaYEsperarCarga();
       esperarInicio = true;
       if (!esPantallaCreacion(tab.url)) {
-        mensaje("mensaje-rappi", "Excel y respaldo descargados. Mi Tienda solicita iniciar sesión; complétala en su pestaña y después pulsa Crear productos. Todavía no se envió el lote.", "warning");
+        mensaje("mensaje-rappi", "Excel y ZIP descargados. Mi Tienda solicita iniciar sesión; complétala en su pestaña y después pulsa Crear productos. Todavía no se envió el lote.", "warning");
         return;
       }
     } else {
@@ -356,8 +358,8 @@ async function prepararEnMiTienda() {
     if (!esPantallaCreacion(tab.url)) {
       throw new Error("Los archivos ya se descargaron. Revisa Mi Tienda e inicia sesión; después vuelve a pulsar Crear productos.");
     }
-    await comprobarDisponibilidadMiTienda(tab, porSku, { esperarInicio });
-    mensaje("mensaje-rappi", porSku ? "Excel y respaldo descargados. Cargando el lote y asignando las imágenes a cada SKU completo…" : "Excel y respaldo descargados. Creando los productos en Mi Tienda…");
+    await comprobarDisponibilidadMiTienda(tab, { esperarInicio });
+    mensaje("mensaje-rappi", "Excel y ZIP descargados. Cargando todas las imágenes mediante la opción masiva de Mi Tienda…");
     let respuesta;
     try {
       respuesta = await chrome.tabs.sendMessage(tab.id, solicitud);

@@ -1,11 +1,9 @@
 // ============================================================
 // rappi/rappi-images-zip.js
 // ============================================================
-// Prepara imágenes para los dos recorridos automáticos de Mi Tienda:
-// ZIP con nombres SKU para referencias sin separadores y adjuntos por fila
-// para SKU con /. En este último caso, el SKU completo identifica la fila
-// y el archivo usa un nombre ASCII seguro para las URL del CDN de Rappi.
-// El ZIP adicional de ese recorrido se descarga solo como respaldo.
+// Recorrido activo: ZIP masivo con nombres SKU y todas las secundarias.
+// Los helpers individuales para SKU con / se conservan para investigación;
+// la interfaz no los utiliza mientras ese proceso queda pendiente.
 //
 // Requiere que vendor/jszip.min.js esté cargado ANTES de este
 // módulo (ver popup.html), exponiendo window.JSZip.
@@ -39,34 +37,42 @@ export async function construirZipImagenes(filasListas) {
   let cantidadImagenes = 0;
 
   for (const { producto } of filasListas) {
-    if (!producto.imagen_principal) continue; // ya bloqueado antes en el validador
-
-    // Imagen principal: sin sufijo (ej. "41161-2.jpg"). Imagen
-    // secundaria (si Shopify trae una segunda foto): con sufijo "_1"
-    // (ej. "41161-2_1.jpg"), tal como exige Rappi.
-    const urlsImagenes = [producto.imagen_principal, ...(producto.imagenes || []).slice(1, 2)];
+    // La principal conserva el nombre del SKU. Todas las otras fotos de
+    // Shopify se incluyen como SKU_1, SKU_2, etc., sin duplicar la principal.
+    // Una secundaria ausente o fallida detiene el lote: no es opcional.
+    const urlsImagenes = obtenerImagenesDelProducto(producto);
 
     for (let indice = 0; indice < urlsImagenes.length; indice++) {
       const url = urlsImagenes[indice];
-      if (!url) continue;
       const sufijo = indice === 0 ? "" : `_${indice}`;
+      const referencia = `${indice === 0 ? "imagen principal" : `imagen secundaria ${indice}`} del SKU ${producto.sku}`;
 
-      const respuesta = await fetch(url);
-      if (!respuesta.ok) {
-        if (indice === 0) {
-          throw new Error(`No se pudo descargar la imagen de SKU ${producto.sku} (HTTP ${respuesta.status}).`);
-        }
-        continue; // la secundaria es opcional: si falla, se omite sin romper el lote
+      let respuesta;
+      try {
+        respuesta = await fetch(url);
+      } catch {
+        throw new ErrorImagenesRappi("IMAGEN_DESCARGA_FALLIDA", `No se pudo descargar la ${referencia}. Revisa la conexión y la foto en Shopify.`, [producto.sku]);
       }
-      const bytes = await respuesta.arrayBuffer();
+      if (!respuesta.ok) {
+        throw new ErrorImagenesRappi("IMAGEN_DESCARGA_FALLIDA", `No se pudo descargar la ${referencia} (HTTP ${respuesta.status}). No se generó un lote incompleto.`, [producto.sku]);
+      }
+      let bytes;
+      try {
+        bytes = await respuesta.arrayBuffer();
+      } catch {
+        throw new ErrorImagenesRappi("IMAGEN_DESCARGA_FALLIDA", `No se pudo leer la descarga de la ${referencia}. No se generó un lote incompleto.`, [producto.sku]);
+      }
       if (bytes.byteLength === 0) {
-        if (indice === 0) {
-          throw new Error(`La imagen del SKU ${producto.sku} llegó vacía desde Shopify.`);
-        }
-        continue;
+        throw new ErrorImagenesRappi("IMAGEN_VACIA", `La ${referencia} llegó vacía desde Shopify. No se generó un lote incompleto.`, [producto.sku]);
       }
       const tipoMime = (respuesta.headers.get("content-type") || "").split(";", 1)[0].toLowerCase();
-      const { bytes: bytesFinales, extension } = await normalizarImagen(bytes, tipoMime, producto.sku);
+      let imagen;
+      try {
+        imagen = await normalizarImagen(bytes, tipoMime, producto.sku);
+      } catch (error) {
+        throw new ErrorImagenesRappi(error instanceof ErrorImagenesRappi ? error.code : "IMAGEN_INVALIDA", `No se pudo preparar la ${referencia}. ${error.message}`, [producto.sku]);
+      }
+      const { bytes: bytesFinales, extension } = imagen;
       zip.file(`${producto.sku}${sufijo}${extension}`, bytesFinales);
       cantidadImagenes++;
     }
@@ -231,6 +237,20 @@ function comprobarJsZip() {
   }
 }
 
+function obtenerImagenesDelProducto(producto) {
+  if (typeof producto.imagen_principal !== "string" || !producto.imagen_principal.trim()) {
+    throw new ErrorImagenesRappi("IMAGEN_PRINCIPAL_AUSENTE", `SKU ${producto.sku} no tiene imagen principal para preparar.`, [producto.sku]);
+  }
+  if (producto.imagenes != null && !Array.isArray(producto.imagenes)) {
+    throw new ErrorImagenesRappi("IMAGENES_INVALIDAS", `La lista de imágenes del SKU ${producto.sku} no es válida.`, [producto.sku]);
+  }
+  const urls = [producto.imagen_principal, ...(producto.imagenes || [])];
+  if (urls.some((url) => typeof url !== "string" || !url.trim())) {
+    throw new ErrorImagenesRappi("IMAGENES_INVALIDAS", `El SKU ${producto.sku} tiene una foto sin dirección en Shopify. Revisa todas sus imágenes antes de preparar el lote.`, [producto.sku]);
+  }
+  return [...new Set(urls)];
+}
+
 function validarNombresParaCargaMasiva(filasListas) {
   const nombres = new Map();
   for (const { producto } of filasListas) {
@@ -241,12 +261,11 @@ function validarNombresParaCargaMasiva(filasListas) {
     if (/[\/\\]/.test(sku)) {
       throw new ErrorImagenesRappi(
         "SKU_IMAGEN_REQUIERE_CARGA_POR_FILA",
-        `El SKU ${sku} contiene un separador. Usa Crear productos para que la extensión cargue su imagen automáticamente en la fila del SKU completo; ese respaldo no se importa mediante el ZIP masivo.`,
+        `El SKU ${sku} contiene un separador. Su carga de imágenes sigue pendiente: desmarca esa publicación para crear un lote mediante la subida masiva de Rappi.`,
         [sku]
       );
     }
-    if (!producto.imagen_principal) continue;
-    const cantidad = producto.imagenes?.[1] ? 2 : 1;
+    const cantidad = obtenerImagenesDelProducto(producto).length;
     for (let indice = 0; indice < cantidad; indice++) {
       const nombre = `${sku}${indice ? `_${indice}` : ""}`;
       if (nombres.has(nombre)) {
@@ -347,14 +366,8 @@ function detectarExtensionImagen(buffer, tipoMime, sku) {
     bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
   ) return ".webp";
 
-  const extensionPorMime = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-  }[tipoMime];
-  if (extensionPorMime) return extensionPorMime;
-
-  throw new Error(`La imagen del SKU ${sku} no tiene un formato reconocible.`);
+  // Un encabezado image/jpeg no convierte HTML de error en una foto. La
+  // firma del contenido debe corresponder a una imagen antes de empaquetar.
+  throw new Error(`La imagen del SKU ${sku} no tiene un formato reconocible en su contenido${tipoMime ? ` (Content-Type: ${tipoMime})` : ""}.`);
 }
 

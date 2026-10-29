@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
+import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 import { limpiarPreparacionRappi } from "../storage/storage.js";
+
+const require = createRequire(import.meta.url);
+const JSZip = require("../vendor/jszip.min.js");
+const XLSX = require("../vendor/xlsx.full.min.js");
 
 const originales = { document: globalThis.document, window: globalThis.window, chrome: globalThis.chrome };
 afterEach(() => {
@@ -54,7 +60,7 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
     imagen_principal: "https://example.invalid/prueba.png", imagenes: ["https://example.invalid/prueba.png"],
   });
   const almacen = {
-    panafargo_productos: { "2247/1": producto("2247/1", 3), "2247/3": producto("2247/3", 6) },
+    panafargo_productos: hooks.productos || { "2247/1": producto("2247/1", 3), "2247/3": producto("2247/3", 6) },
     panafargo_lote_ui: { entradas: ["2247"], ubicacion: "LOCAL" },
     panafargo_matriz_v11: [{ sku: "2247/1" }],
     panafargo_equiv_categoria: { anterior: "Papelería" },
@@ -76,6 +82,10 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
   globalThis.document = { getElementById: nodo, createElement: (tag) => new Nodo(tag) };
   globalThis.window = new EventTarget();
   globalThis.chrome = {
+    runtime: {
+      getManifest: () => ({ version: "4.1.7" }),
+      getURL: (ruta) => `chrome-extension://prueba/${ruta}`,
+    },
     storage: { local: {
       get: async (key) => {
         await hooks.antesDeLeer?.(key);
@@ -100,7 +110,10 @@ async function interfaz(t, hooks = {}, esperarInicio = true) {
         if (mensaje.tipo === "RAPPI_REINICIAR_PREPARACION") {
           return hooks.reiniciarPortal ? hooks.reiniciarPortal(id) : { ok: true, reiniciado: true };
         }
-        return hooks.estadoPortal ? hooks.estadoPortal(id) : { ok: true, cargaEnCurso: false, reiniciarPreparacion: true };
+        if (mensaje.tipo === "RAPPI_SUBIR_LOTE") {
+          return hooks.subirLote ? hooks.subirLote(id, mensaje) : { ok: true, paso: "productos_creados_pendiente_asociacion", mensaje: "Resultado simulado de Rappi." };
+        }
+        return hooks.estadoPortal ? hooks.estadoPortal(id) : { ok: true, cargaEnCurso: false, reiniciarPreparacion: true, versionExtension: "4.1.7" };
       },
       onUpdated: {
         addListener: (callback) => listenersActualizacion.add(callback),
@@ -338,4 +351,144 @@ test("un fallo al persistir la selección reiniciada conserva la advertencia", a
   assert.ok(nodo("lista-rappi").querySelectorAll().every((checkbox) => !checkbox.checked));
   assert.equal(nodo("mensaje-rappi").dataset.tone, "warning");
   assert.match(nodo("mensaje-rappi").textContent, /No se pudo guardar la selección/);
+});
+
+const publicacionNormal = (sku = "40105") => ({
+  sku, nombre: `Producto ${sku}`, precio: 3500, precio_comparacion: null, inventario: 50,
+  peso: 1, unidad_peso_shopify: "GRAMS", descripcion: "Descripción local de prueba",
+  imagen_principal: "https://example.invalid/principal.png",
+  imagenes: ["https://example.invalid/principal.png", "https://example.invalid/secundaria-1.png", "https://example.invalid/secundaria-2.png"],
+  imagenes_completas: true,
+});
+
+const esperarHasta = async (condicion) => {
+  for (let intento = 0; intento < 100 && !condicion(); intento++) await new Promise(setImmediate);
+  assert.ok(condicion(), "El proceso local debe alcanzar el estado esperado.");
+};
+
+test("un lote con / queda pendiente antes de descargas o envío y permite desmarcarlo", async (t) => {
+  const { nodo, mensajesPortal, escriturasPortal } = await interfaz(t);
+  assert.equal(nodo("btn-subir-mi-tienda").disabled, true);
+  assert.equal(nodo("aviso-imagenes-disenos").hidden, false);
+  assert.match(nodo("aviso-imagenes-disenos").textContent, /queda pendiente.*Desmarca/);
+  // Un evento programático también debe respetar la restricción del botón.
+  await nodo("btn-subir-mi-tienda").emitir("click");
+  assert.deepEqual(mensajesPortal, []);
+  assert.deepEqual(escriturasPortal, []);
+  assert.match(nodo("mensaje-rappi").textContent, /queda pendiente/);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+  assert.equal(nodo("btn-descargar-plantilla-asociacion-generada").disabled, false,
+    "La asociación de productos existentes con SKU completo sigue disponible.");
+  assert.ok(nodo("lista-rappi").querySelectorAll().every((checkbox) => !checkbox.disabled));
+});
+
+test("desmarcar / restaura ZIP masivo completo y envía exactamente el ZIP descargado tras las dos descargas", async (t) => {
+  const normal = publicacionNormal();
+  const diseno = publicacionNormal("11351/MoveForward");
+  const { nodo, mensajesPortal } = await interfaz(t, {
+    productos: { [normal.sku]: normal, [diseno.sku]: diseno },
+    tabs: [{ id: 1, url: "https://mitienda.rappi.com.co/cms/catalog/bulk-creation/home-manual" }],
+  });
+  assert.equal(nodo("btn-subir-mi-tienda").disabled, true);
+  const checks = nodo("lista-rappi").querySelectorAll();
+  checks[1].checked = false;
+  await checks[1].emitir("change");
+  assert.equal(nodo("btn-subir-mi-tienda").disabled, false);
+  assert.equal(nodo("aviso-imagenes-disenos").hidden, true);
+
+  window.XLSX = XLSX;
+  window.JSZip = JSZip;
+  const plantilla = await readFile(new URL("../rappi/plantilla-rappi-base.xlsx", import.meta.url));
+  const foto = await readFile(new URL("../icons/icon48.png", import.meta.url));
+  const consultas = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    consultas.push(url);
+    return String(url).startsWith("chrome-extension:")
+      ? new Response(plantilla)
+      : new Response(foto, { headers: { "content-type": "image/png" } });
+  });
+  const blobs = new Map();
+  const descargas = [];
+  const estados = new Map();
+  const listeners = new Set();
+  t.mock.method(URL, "createObjectURL", (blob) => {
+    const url = `blob:prueba-zip-${blobs.size}`;
+    blobs.set(url, blob);
+    return url;
+  });
+  t.mock.method(URL, "revokeObjectURL", () => {});
+  chrome.downloads = {
+    download: async (solicitud) => {
+      const id = descargas.length + 1;
+      descargas.push({ ...solicitud, id });
+      estados.set(id, "in_progress");
+      return id;
+    },
+    search: async ({ id }) => [{ id, state: estados.get(id) }],
+    cancel: async (id) => estados.set(id, "interrupted"),
+    onChanged: {
+      addListener: (listener) => listeners.add(listener),
+      removeListener: (listener) => listeners.delete(listener),
+    },
+    onErased: { addListener() {}, removeListener() {} },
+  };
+  const completar = (id) => {
+    estados.set(id, "complete");
+    for (const listener of [...listeners]) listener({ id, state: { current: "complete" } });
+  };
+  const envio = nodo("btn-subir-mi-tienda").emitir("click");
+  await esperarHasta(() => descargas.length === 1);
+  assert.match(descargas[0].filename, /\.xlsx$/);
+  assert.equal(mensajesPortal.some(({ mensaje }) => mensaje.tipo === "RAPPI_SUBIR_LOTE"), false);
+  completar(1);
+  await esperarHasta(() => descargas.length === 2);
+  assert.match(descargas[1].filename, /Imagenes\/imagenes_rappi_.*\.zip$/);
+  assert.equal(mensajesPortal.some(({ mensaje }) => mensaje.tipo === "RAPPI_SUBIR_LOTE"), false);
+  const zipDescargado = new Uint8Array(await blobs.get(descargas[1].url).arrayBuffer());
+  const zip = await JSZip.loadAsync(zipDescargado);
+  assert.deepEqual(Object.keys(zip.files), ["40105.png", "40105_1.png", "40105_2.png"]);
+  assert.ok(Object.keys(zip.files).every((nombre) => !/mapa|LEEME|pf_img/.test(nombre)));
+  completar(2);
+  await envio;
+  const envios = mensajesPortal.filter(({ mensaje }) => mensaje.tipo === "RAPPI_SUBIR_LOTE");
+  assert.equal(envios.length, 1);
+  const solicitud = envios[0].mensaje;
+  assert.deepEqual(solicitud.skus, [normal.sku]);
+  assert.equal(Object.hasOwn(solicitud, "imagenesPorSku"), false);
+  assert.equal(Object.hasOwn(solicitud, "imagenesManualesPorSku"), false);
+  assert.deepEqual(Uint8Array.from(Buffer.from(solicitud.imagenesZipBase64, "base64")), zipDescargado);
+  for (const url of normal.imagenes) assert.equal(consultas.filter((consulta) => consulta === url).length, 1);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "ok");
+  assert.equal(listeners.size, 0);
+});
+
+test("una pestaña con content script anterior detiene el lote antes de preparar o descargar archivos", async (t) => {
+  const normal = publicacionNormal();
+  const { nodo, mensajesPortal, escriturasPortal } = await interfaz(t, {
+    productos: { [normal.sku]: normal },
+    tabs: [{ id: 1, url: "https://mitienda.rappi.com.co/cms/catalog/bulk-creation/home-manual" }],
+    estadoPortal: () => ({ ok: true, cargaEnCurso: false, versionExtension: "4.1.6" }),
+  });
+  t.mock.method(globalThis, "fetch", async () => assert.fail("No se preparan archivos con content script anterior."));
+  await nodo("btn-subir-mi-tienda").emitir("click");
+  assert.deepEqual(mensajesPortal, [{ id: 1, mensaje: { tipo: "RAPPI_ESTADO_CARGA" } }]);
+  assert.deepEqual(escriturasPortal, []);
+  assert.match(nodo("mensaje-rappi").textContent, /Recarga.*F5/);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
+});
+
+test("un producto guardado antes de confirmar galerías completas exige buscar otra vez sin preparar ni enviar archivos", async (t) => {
+  const anterior = publicacionNormal();
+  delete anterior.imagenes_completas;
+  const { nodo, mensajesPortal, escriturasPortal } = await interfaz(t, {
+    productos: { [anterior.sku]: anterior },
+    tabs: [{ id: 1, url: "https://mitienda.rappi.com.co/cms/catalog/bulk-creation/home-manual" }],
+  });
+  assert.equal(nodo("btn-subir-mi-tienda").disabled, false, "El botón permite mostrar la instrucción para renovar la consulta.");
+  t.mock.method(globalThis, "fetch", async () => assert.fail("La galería antigua no debe iniciar consultas de archivos."));
+  await nodo("btn-subir-mi-tienda").emitir("click");
+  assert.deepEqual(mensajesPortal, []);
+  assert.deepEqual(escriturasPortal, []);
+  assert.match(nodo("mensaje-rappi").textContent, /Vuelve a Buscar y validar.*galería completa/);
+  assert.equal(nodo("mensaje-rappi").dataset.tone, "error");
 });

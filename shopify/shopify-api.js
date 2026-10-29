@@ -52,10 +52,26 @@ const GRAPHQL_QUERY = `
             tags
             featuredImage { url altText }
             images(first: 2) {
+              pageInfo { hasNextPage endCursor }
               edges { node { url altText } }
             }
           }
         }
+      }
+    }
+  }
+`;
+
+// La búsqueda ya incluye 50 variantes. Pedir 250 imágenes dentro de cada
+// variante multiplicaría el coste GraphQL; las páginas restantes se leen
+// una sola vez por producto, sin recortar su galería a las primeras dos.
+const GRAPHQL_QUERY_IMAGENES = `
+  query completarImagenesProducto($id: ID!, $after: String) {
+    product(id: $id) {
+      id
+      images(first: 250, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { url altText } }
       }
     }
   }
@@ -133,7 +149,7 @@ function escaparLiteralBusqueda(sku) {
   return sku.replace(/[\\\s:()"'*<>!=\-]/gu, "\\$&");
 }
 
-async function consultarPaginaVariantes(accessToken, query, after) {
+async function consultarGraphQL(accessToken, query, variables) {
   const response = await fetch(endpointGraphQL(), {
     method: "POST",
     headers: {
@@ -141,8 +157,8 @@ async function consultarPaginaVariantes(accessToken, query, after) {
       "X-Shopify-Access-Token": accessToken,
     },
     body: JSON.stringify({
-      query: GRAPHQL_QUERY,
-      variables: { query, after },
+      query,
+      variables,
     }),
   });
 
@@ -171,11 +187,59 @@ async function consultarPaginaVariantes(accessToken, query, after) {
     );
   }
 
-  const variantes = data?.data?.productVariants;
+  return data?.data;
+}
+
+async function consultarPaginaVariantes(accessToken, query, after) {
+  const data = await consultarGraphQL(accessToken, GRAPHQL_QUERY, { query, after });
+  const variantes = data?.productVariants;
   if (!Array.isArray(variantes?.edges) || typeof variantes?.pageInfo?.hasNextPage !== "boolean") {
     throw new Error("Shopify devolvió una respuesta de productos inválida.");
   }
   return variantes;
+}
+
+function validarPaginaImagenes(imagenes, productId) {
+  if (
+    !Array.isArray(imagenes?.edges) ||
+    typeof imagenes?.pageInfo?.hasNextPage !== "boolean" ||
+    imagenes.edges.some((edge) => typeof edge?.node?.url !== "string" || !edge.node.url)
+  ) {
+    throw new Error(`Shopify devolvió una galería de imágenes inválida para ${productId}; no se usaron imágenes parciales.`);
+  }
+  return imagenes;
+}
+
+async function completarGalerias(accessToken, variantes) {
+  const galerias = new Map();
+  for (const variante of variantes) {
+    const producto = variante.product;
+    if (typeof producto?.id !== "string" || !producto.id) {
+      throw new Error("Shopify devolvió un producto sin identidad para consultar todas sus imágenes.");
+    }
+    let pagina = validarPaginaImagenes(producto.images, producto.id);
+    if (!galerias.has(producto.id)) {
+      const edges = [...pagina.edges];
+      const cursoresVistos = new Set();
+      while (pagina.pageInfo.hasNextPage) {
+        const after = pagina.pageInfo.endCursor;
+        if (typeof after !== "string" || !after || cursoresVistos.has(after)) {
+          throw new Error(`Shopify devolvió una paginación de imágenes inválida para ${producto.id}; no se usaron imágenes parciales.`);
+        }
+        cursoresVistos.add(after);
+        const data = await consultarGraphQL(accessToken, GRAPHQL_QUERY_IMAGENES, { id: producto.id, after });
+        if (data?.product?.id !== producto.id) {
+          throw new Error(`Shopify no devolvió el producto esperado al completar sus imágenes: ${producto.id}.`);
+        }
+        pagina = validarPaginaImagenes(data.product.images, producto.id);
+        edges.push(...pagina.edges);
+      }
+      galerias.set(producto.id, { edges, pageInfo: pagina.pageInfo });
+    }
+    // Las publicaciones de un mismo producto comparten la galería completa;
+    // su imagen de variante y su inventario permanecen independientes.
+    variante.product = { ...producto, images: galerias.get(producto.id) };
+  }
 }
 
 /**
@@ -217,5 +281,6 @@ export async function buscarProductosPorSku(sku) {
     after = siguiente;
   }
 
+  await completarGalerias(accessToken, raws);
   return { found: raws.length > 0, raws, tipoBusqueda, skuBase };
 }

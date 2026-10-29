@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { readFile } from "node:fs/promises";
+import { desdeShopify } from "../utils/model.js";
 import {
   analizarSku,
   esSkuPublicacion,
@@ -53,7 +54,20 @@ function variant(sku, id = sku) {
     id: `gid://shopify/ProductVariant/${id}`, sku, title: "Diseño de prueba",
     image: { url: `https://example.invalid/${encodeURIComponent(sku)}.jpg`, altText: "Diseño" },
     inventoryQuantity: 3,
+    product: {
+      id: `gid://shopify/Product/${id}`,
+      featuredImage: null,
+      images: imagePage([]),
+    },
   };
+}
+
+function imagePage(urls, hasNextPage = false, endCursor = null) {
+  return { edges: urls.map((url) => ({ node: { url, altText: "Foto de prueba" } })), pageInfo: { hasNextPage, endCursor } };
+}
+
+function imagesResponse(id, urls, hasNextPage = false, endCursor = null) {
+  return { data: { product: { id, images: imagePage(urls, hasNextPage, endCursor) } } };
 }
 
 function page(nodes, hasNextPage = false, endCursor = null) {
@@ -166,6 +180,158 @@ test("un ID repetido entre páginas no duplica una publicación", async () => {
   const result = await buscarProductosPorSku("10498");
   assert.equal(result.raws.length, 2);
 });
+
+test("recupera todas las imágenes adicionales sin cambiar foto principal, precio ni inventario", async () => {
+  const raw = variant("40105");
+  raw.price = "6900";
+  raw.compareAtPrice = "7000";
+  raw.product.featuredImage = { url: "https://example.invalid/principal.jpg" };
+  raw.image = { url: "https://example.invalid/principal.jpg" };
+  raw.product.images = imagePage([
+    raw.image.url,
+    "https://example.invalid/secundaria-1.jpg",
+  ], true, "foto-2");
+  mockPages([
+    page([raw]),
+    imagesResponse(raw.product.id, ["https://example.invalid/secundaria-2.jpg", "https://example.invalid/secundaria-3.jpg"]),
+  ]);
+  const result = await buscarProductosPorSku("40105");
+  const producto = desdeShopify(result.raws[0]);
+  assert.deepEqual(producto.imagenes, [raw.image.url, ...[1, 2, 3].map((i) => `https://example.invalid/secundaria-${i}.jpg`)]);
+  assert.equal(producto.imagen_principal, raw.image.url);
+  assert.equal(producto.imagenes_completas, true);
+  assert.equal(producto.precio, 6900);
+  assert.equal(producto.precio_comparacion, 7000);
+  assert.equal(producto.inventario, 3);
+  assert.match(requests[1].query, /images\(first:\s*250, after:\s*\$after\)/);
+  assert.deepEqual(requests[1].variables, { id: raw.product.id, after: "foto-2" });
+});
+
+test("la galería completa se consulta una sola vez para las variantes del mismo producto", async () => {
+  const azul = variant("10498/azul", "azul");
+  const rojo = variant("10498/rojo", "rojo");
+  const comunes = ["https://example.invalid/comun-1.jpg", "https://example.invalid/comun-2.jpg"];
+  azul.product.images = imagePage(comunes, true, "foto-2");
+  rojo.product = { ...azul.product };
+  mockPages([
+    page([azul, rojo]),
+    imagesResponse(azul.product.id, ["https://example.invalid/comun-3.jpg"]),
+  ]);
+  const result = await buscarProductosPorSku("10498");
+  assert.equal(requests.length, 2);
+  assert.equal(result.raws[0].product.images.edges.length, 3);
+  assert.deepEqual(result.raws[1].product.images, result.raws[0].product.images);
+  assert.equal(desdeShopify(result.raws[0]).imagen_principal, azul.image.url);
+  assert.equal(desdeShopify(result.raws[1]).imagen_principal, rojo.image.url);
+  assert.equal(desdeShopify(result.raws[0]).inventario, azul.inventoryQuantity);
+  assert.equal(desdeShopify(result.raws[1]).inventario, rojo.inventoryQuantity);
+});
+
+test("pagina toda la galería y deduplica fotos sin perder su orden en el modelo", async () => {
+  const raw = variant("40105");
+  const fotos = Array.from({ length: 255 }, (_, i) => `https://example.invalid/foto-${i}.jpg`);
+  raw.image = { url: fotos[0] };
+  raw.product.featuredImage = { url: fotos[0] };
+  raw.product.images = imagePage(fotos.slice(0, 2), true, "foto-2");
+  mockPages([
+    page([raw]),
+    imagesResponse(raw.product.id, fotos.slice(2, 252), true, "foto-252"),
+    imagesResponse(raw.product.id, [...fotos.slice(252), fotos[1]]),
+  ]);
+  const result = await buscarProductosPorSku("40105");
+  assert.deepEqual(desdeShopify(result.raws[0]).imagenes, fotos);
+  assert.equal(desdeShopify(result.raws[0]).imagenes_completas, true);
+  assert.deepEqual(requests.slice(1).map((r) => r.variables.after), ["foto-2", "foto-252"]);
+});
+
+test("sin imagen de variante conserva el fallback featured y todas las secundarias", async () => {
+  const raw = variant("40105");
+  raw.image = null;
+  raw.product.featuredImage = { url: "https://example.invalid/featured.jpg" };
+  raw.product.images = imagePage(["https://example.invalid/otra-1.jpg", "https://example.invalid/otra-2.jpg"], true, "foto-2");
+  mockPages([
+    page([raw]),
+    imagesResponse(raw.product.id, ["https://example.invalid/otra-3.jpg"]),
+  ]);
+  const producto = desdeShopify((await buscarProductosPorSku("40105")).raws[0]);
+  assert.equal(producto.imagen_principal, raw.product.featuredImage.url);
+  assert.deepEqual(producto.imagenes, [raw.product.featuredImage.url, ...[1, 2, 3].map((i) => `https://example.invalid/otra-${i}.jpg`)]);
+  assert.equal(producto.imagenes_completas, true);
+});
+
+test("las galerías antiguas sin pageInfo y las páginas incompletas no se marcan como completas", () => {
+  for (const pageInfo of [undefined, { hasNextPage: true, endCursor: "foto-2" }]) {
+    const raw = variant("40105");
+    raw.product.images = imagePage(["https://example.invalid/1.jpg", "https://example.invalid/2.jpg"]);
+    if (pageInfo === undefined) delete raw.product.images.pageInfo;
+    else raw.product.images.pageInfo = pageInfo;
+    const producto = desdeShopify(raw);
+    assert.equal(producto.imagenes_completas, false);
+    assert.equal(producto.imagen_principal, raw.image.url);
+    assert.equal(producto.imagenes.length, 3, "Las fotos siguen visibles mientras se actualiza su integridad.");
+  }
+});
+
+test("galería vacía confirmada conserva el marcador completo y los fallback de imagen", async () => {
+  const variante = variant("40105");
+  const featured = variant("40106");
+  featured.image = null;
+  featured.product.featuredImage = { url: "https://example.invalid/featured.jpg" };
+  mockPages([page([variante]), page([featured])]);
+  const desdeVariante = desdeShopify((await buscarProductosPorSku("40105")).raws[0]);
+  const desdeFeatured = desdeShopify((await buscarProductosPorSku("40106")).raws[0]);
+  assert.equal(desdeVariante.imagenes_completas, true);
+  assert.equal(desdeFeatured.imagenes_completas, true);
+  assert.deepEqual(desdeVariante.imagenes, [variante.image.url]);
+  assert.deepEqual(desdeFeatured.imagenes, [featured.product.featuredImage.url]);
+});
+
+for (const [nombre, cursor, siguientes] of [
+  ["cursor ausente", null, []],
+  ["cursor repetido", "foto-2", [imagesResponse("gid://shopify/Product/40105", ["https://example.invalid/3.jpg"], true, "foto-2")]],
+]) {
+  test(`no devuelve una galería parcial si la paginación falla: ${nombre}`, async () => {
+    const raw = variant("40105");
+    raw.product.images = imagePage(["https://example.invalid/1.jpg", "https://example.invalid/2.jpg"], true, cursor);
+    mockPages([page([raw]), ...siguientes]);
+    await assert.rejects(buscarProductosPorSku("40105"), /paginación de imágenes inválida.*no se usaron imágenes parciales/);
+  });
+}
+
+test("un error de Shopify al completar las fotos cancela el resultado parcial", async () => {
+  const raw = variant("40105");
+  raw.product.images = imagePage(["https://example.invalid/1.jpg"], true, "foto-1");
+  mockPages([page([raw]), { errors: [{ message: "No se pudo obtener la galería" }] }]);
+  await assert.rejects(buscarProductosPorSku("40105"), /No se pudo obtener la galería/);
+});
+
+test("un 401 durante la paginación de imágenes invalida el token", async () => {
+  const raw = variant("40105");
+  raw.product.images = imagePage(["https://example.invalid/1.jpg"], true, "foto-1");
+  let calls = 0;
+  globalThis.fetch = async () => ++calls === 1
+    ? new Response(JSON.stringify(page([raw])))
+    : new Response("{}", { status: 401 });
+  await assert.rejects(buscarProductosPorSku("40105"), /401/);
+  assert.equal(calls, 2);
+  assert.deepEqual(removed, ["panafargo_shopify_token"]);
+});
+
+test("no acepta una galería perteneciente a otro producto", async () => {
+  const raw = variant("40105");
+  raw.product.images = imagePage(["https://example.invalid/1.jpg"], true, "foto-1");
+  mockPages([page([raw]), imagesResponse("gid://shopify/Product/otro", ["https://example.invalid/otra.jpg"])]);
+  await assert.rejects(buscarProductosPorSku("40105"), /producto esperado/);
+});
+
+for (const conexion of [null, { edges: [] }, { edges: [{ node: {} }], pageInfo: { hasNextPage: false } }]) {
+  test(`no presenta una galería incompleta como válida: ${JSON.stringify(conexion)}`, async () => {
+    const raw = variant("40105");
+    raw.product.images = conexion;
+    mockPages([page([raw])]);
+    await assert.rejects(buscarProductosPorSku("40105"), /galería de imágenes inválida.*no se usaron imágenes parciales/);
+  });
+}
 
 test("no colapsa variantes distintas solo porque comparten un SKU", async () => {
   mockPages([page([variant("10498/azul", "1"), variant("10498/azul", "2")])]);
