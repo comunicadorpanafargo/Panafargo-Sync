@@ -11,7 +11,7 @@ function crearEntorno() {
   let timeout;
   const contexto = vm.createContext({
     File, atob, console,
-    document: { body: { innerText: "" }, querySelectorAll: (selector) => selector === "app-handle-images-actions" ? paneles : [] },
+    document: { body: { innerText: "" }, querySelector: () => null, querySelectorAll: (selector) => selector === "app-handle-images-actions" ? paneles : [] },
     getComputedStyle: (elemento) => ({ visibility: elemento.visibility || "visible" }),
     sessionStorage: { getItem: () => null },
     chrome: { runtime: { onMessage: { addListener() {} } } },
@@ -158,4 +158,23 @@ test("un selector que sigue deshabilitado vence sin recibir el ZIP", async () =>
   await new Promise(setImmediate); e.vencer();
   assert.equal((await pendiente).paso, "imagenes_formulario_no_encontrado");
   assert.equal(asignaciones, 0);
+});
+
+test("un ZIP ajeno o un panel antiguo oculto no convierten una plantilla nueva en revisión de imágenes", () => {
+  const e = crearEntorno(); const antiguo = e.crearPanel({ visible: false }); const plantilla = {};
+  e.mostrar(antiguo.panel);
+  e.contexto.document.querySelector = (selector) => selector.includes("products_catalog_upload_file_button") ? plantilla : { hidden: true };
+  assert.equal(e.contexto.detectarEstadoDelFlujo().tipo, "plantilla");
+});
+
+test("el ZIP del drawer nativo abierto identifica la revisión sin depender de un encabezado", () => {
+  const e = crearEntorno(); const actual = e.crearPanel(); e.mostrar(actual.panel);
+  const estado = e.contexto.detectarEstadoDelFlujo();
+  assert.equal(estado.tipo, "imagenes"); assert.equal(estado.inputZip, actual.input);
+});
+
+test("una revisión con paneles ambiguos exige revisar y no escoge un input", () => {
+  const e = crearEntorno(); e.mostrar(e.crearPanel().panel, e.crearPanel().panel);
+  const estado = e.contexto.detectarEstadoDelFlujo();
+  assert.equal(estado.tipo, "imagenes"); assert.equal(estado.ambiguo, true); assert.equal(estado.inputZip, null);
 });

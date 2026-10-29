@@ -309,7 +309,14 @@ function resultadoImagenesManuales(skus, plantillaSubida) {
 
 function detectarEstadoDelFlujo() {
   const enlace = buscarElementoPorTexto("a, button, [role='button']", TEXTO_LINK_MULTIPLES_IMAGENES);
-  const inputZip = document.querySelector(SELECTOR_INPUT_ZIP);
+  let inputZip;
+  try {
+    inputZip = buscarDestinoZipMasivo()?.input || null;
+  } catch {
+    // La consulta de estado no elige un formulario ambiguo ni hace cambios.
+    // Debe exigir revisión del lote, no presentarlo como una plantilla nueva.
+    return { tipo: "imagenes", enlace, inputZip: null, ambiguo: true };
+  }
   const tituloRevision = buscarElementoPorTexto("h1, h2, h3, p", TEXTO_TITULO_REVISION_IMAGENES);
   if (enlace || inputZip || tituloRevision) return { tipo: "imagenes", enlace, inputZip };
 

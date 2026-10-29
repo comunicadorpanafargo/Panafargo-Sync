@@ -41,6 +41,8 @@ En 4.1.7, después de abrir el panel correcto, `esperarSelector(SELECTOR_INPUT_Z
 
 Ahora la búsqueda se limita al panel masivo abierto y a su control de archivos. Los inputs ocultos por diseño siguen siendo válidos cuando su panel está abierto. Los formularios ajenos y paneles ocultos no son candidatos. Si hay varios destinos activos o el control no puede confirmarse, no se adjunta el ZIP ni se continúa con la creación.
 
+La identificación de la etapa usa el mismo criterio. Un selector ZIP de otro formulario no hace que una pantalla de plantilla se interprete como revisión de imágenes. Una vista ambigua exige revisión, sin seleccionar ni modificar ningún archivo.
+
 La reproducción demuestra una selección incorrecta posible en el código anterior. No demuestra que otro selector estuviera presente en la sesión privada del usuario ni establece una causa única de los fallos del servicio de Rappi.
 
 ## Fuentes y alcance
