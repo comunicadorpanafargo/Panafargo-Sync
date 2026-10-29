@@ -1,6 +1,6 @@
 # Imágenes de SKU con `/`: causa, contrato y comprobación
 
-Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.6.
+Documento histórico del 29 de octubre de 2026, correspondiente a 4.1.2–4.1.6. **En 4.1.7 la interfaz vuelve al ZIP masivo y deja `/` pendiente; no inicia este recorrido individual.** Consulta el [estado vigente y la comparación de versiones](carga-masiva-rappi-4.1.7.md).
 
 En 4.1.6 se retiró exclusivamente la pantalla de espera de la extensión. Mi Tienda queda visible durante todas las fases; el procesamiento, los clics de creación y sus tiempos no se modificaron. La investigación general de imágenes está en [investigacion-subida-imagenes-rappi.md](investigacion-subida-imagenes-rappi.md). Esta retirada visual no se presenta como una reparación del servicio de imágenes de Rappi.
 
@@ -48,7 +48,7 @@ El bundle de catálogo permite comprobar:
 6. La respuesta de éxito actualiza `product.image` de ese producto. Tanto éxito como error retiran el loader: su desaparición, por sí sola, no prueba éxito.
 7. La lista se pagina inicialmente de diez en diez. `app-pagination a.pagination-next` avanza y `a.pagination-start` vuelve al inicio. Las clases del `li.page` padre indican si están deshabilitados. El buscador de esa pantalla es por nombre/EAN; no se inventó un filtro por SKU.
 
-## Solución implementada
+## Recorrido implementado en 4.1.2–4.1.6, suspendido en la interfaz actual
 
 Para un lote que contenga separadores, `Crear productos` genera el Excel con los SKU completos y un manifiesto de imágenes por SKU, no un ZIP para el importador masivo. Cada imagen corresponde a la foto principal de su publicación. Se usan JPG/PNG; WebP se recodifica a JPEG sin aumentar las dimensiones. Un presupuesto de transporte evita enviar un mensaje excesivamente grande y pide dividir la selección si hace falta.
 

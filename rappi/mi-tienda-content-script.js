@@ -377,6 +377,7 @@ async function subirImagenes(
   // ---- Paso 5: subir el .zip y esperar "Continuar" del drawer ----
   establecerEtapa("asignar_zip");
   const archivoZip = base64AArchivo(imagenesZipBase64, imagenesZipNombre, "application/zip");
+  const panelImagenes = inputZip.closest?.("app-handle-images-actions") || null;
   asignarArchivosAInput(inputZip, [archivoZip]);
   const archivoAsignado = await esperarArchivosAsignados(inputZip, 5000);
   if (!archivoAsignado) {
@@ -389,7 +390,7 @@ async function subirImagenes(
   // ---- Paso 5b: esperar a que Rappi termine de procesar el .zip ----
   // Se espera la señal real de éxito o error antes de continuar con la creación.
   establecerEtapa("procesar_zip");
-  const r = await esperarResultadoProcesamientoZip(600000);
+  const r = await esperarResultadoProcesamientoZip(600000, panelImagenes);
   const traza = describirTraza(r);
 
   if (r.estado === "exito") {
@@ -421,12 +422,12 @@ async function subirImagenes(
   if (r.estado === "error_rappi") {
     return {
       paso: "imagenes_error_rappi",
-      mensaje: `Rappi rechazó el ZIP (peso/formato) a los ${r.segundos}s. ${traza}`,
+      mensaje: `Rappi informó un error al cargar las imágenes a los ${r.segundos}s: ${r.detalle || "revisa el panel de carga masiva"}. No se pulsó Crear productos. ${traza}`,
     };
   }
   return {
     paso: "imagenes_sin_terminar",
-    mensaje: `Pasaron ${r.segundos}s (10 min máx.) y Rappi no mostró éxito ni error. ${traza}`,
+    mensaje: `Pasaron ${r.segundos}s (10 min máx.) sin confirmar el resultado del procesamiento. ${r.detalle ? `El panel muestra: ${r.detalle}. ` : ""}Revisa Mi Tienda antes de refrescar o repetir el lote. ${traza}`,
   };
 }
 
@@ -500,42 +501,62 @@ function describirTraza(r) {
 }
 
 /**
- * Sondea la pantalla cada 500 ms hasta ver: éxito ("Carpeta cargada con
- * éxito" / "Procesamiento completado"), error de Rappi (peso/formato),
- * página 404, o agotar el tiempo. Registra porcentajes y cambios de URL.
+ * Observa el panel nativo de imágenes, no textos de ayuda o avisos de otros
+ * procesos. El 100 % solo acredita el envío del ZIP, no su procesamiento.
+ * Un error terminal tiene prioridad sobre cualquier mensaje de éxito.
  */
-function esperarResultadoProcesamientoZip(timeoutMs) {
+function esperarResultadoProcesamientoZip(timeoutMs, panelEsperado = null) {
   return new Promise((resolve) => {
     const inicio = Date.now();
     const urlInicial = location.href;
     let cambioUrl = null;
+    let errorInicial = null;
     const progresos = [];
 
-    const terminar = (estado) => {
+    const terminar = (estado, detalle = null) => {
       clearInterval(intervalo);
       clearTimeout(timer);
-      resolve({ estado, segundos: Math.round((Date.now() - inicio) / 1000), cambioUrl, progresos });
+      resolve({ estado, detalle, segundos: Math.round((Date.now() - inicio) / 1000), cambioUrl, progresos });
     };
 
     const intervalo = setInterval(() => {
       const segundos = Math.round((Date.now() - inicio) / 1000);
       if (!cambioUrl && location.href !== urlInicial) cambioUrl = { url: location.href, segundos };
 
-      const pct = Array.from(document.querySelectorAll(".progress-bar-title"))
+      const visible = (elemento) => elemento.getClientRects().length > 0 && getComputedStyle(elemento).visibility !== "hidden";
+      const panel = panelEsperado
+        ? (visible(panelEsperado) ? panelEsperado : null)
+        : Array.from(document.querySelectorAll("app-handle-images-actions")).find(visible);
+      const pct = Array.from(panel?.querySelectorAll(".progress-bar-title") || [])
+        .filter(visible)
         .map((e) => e.textContent.trim())
         .filter(Boolean)
         .join(" / ");
       if (pct && progresos[progresos.length - 1]?.pct !== pct) progresos.push({ pct, segundos });
 
-      const texto = normalizarTexto(document.body?.innerText);
-      if (texto.includes("pagina no encontrada")) return terminar("pagina_404");
-      if (texto.includes("carpeta cargada con exito") || texto.includes("procesamiento completado")) {
-        return terminar("exito");
+      if (normalizarTexto(document.body?.innerText).includes("pagina no encontrada")) return terminar("pagina_404");
+      if (!panel) return;
+      const texto = normalizarTexto(panel.innerText);
+      const errores = Array.from(panel.querySelectorAll(".upload-manager.error")).filter(visible);
+      const errorTerminal = errores.find((elemento) => !elemento.querySelector(".error"));
+      const errorSubida = Array.from(panel.querySelectorAll(".progress-bar-fill-transition-error")).some(visible)
+        || texto.includes("carpeta no pudo ser cargada") || texto.includes("error en la carga del archivo");
+      if (errorTerminal || errorSubida) {
+        return terminar("error_rappi", (errorTerminal?.innerText || panel.innerText).trim().slice(-500));
       }
-      if (texto.includes("verifica que el peso de cada imagen")) return terminar("error_rappi");
+      if (errores.length) {
+        // Al abrir el drawer, Rappi pide una URL firmada de forma asíncrona.
+        // Su estado inicial puede mostrar un error y luego iniciar el envío.
+        // No repetir change ni liberar el bloqueo por ese estado provisional:
+        // la URL puede llegar tarde y el mismo handler empezar el envío.
+        errorInicial = errores[0].innerText.trim().slice(0, 500);
+        return;
+      }
+      errorInicial = null;
+      if (texto.includes("carpeta cargada con exito") || texto.includes("procesamiento completado")) return terminar("exito");
     }, 500);
 
-    const timer = setTimeout(() => terminar("timeout"), timeoutMs);
+    const timer = setTimeout(() => terminar("timeout", errorInicial), timeoutMs);
   });
 }
 

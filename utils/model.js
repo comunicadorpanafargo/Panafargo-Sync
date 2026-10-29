@@ -55,6 +55,10 @@ export function desdeShopify(rawVariant) {
     opciones_variante: rawVariant.selectedOptions || [],
     imagenes,
     imagen_principal: imagenPrincipal,
+    // Solo una galería cuya última página fue confirmada permite preparar
+    // todas las secundarias. Los datos antiguos sin pageInfo se actualizan
+    // consultando Shopify otra vez; dos URL guardadas no prueban integridad.
+    imagenes_completas: product.images?.pageInfo?.hasNextPage === false,
     estado: ESTADOS.ENCONTRADO,
     destinos: ["rappi"],
 

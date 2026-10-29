@@ -129,6 +129,85 @@ test("el ZIP automático conserva las imágenes y los nombres de SKU normales co
   assert.deepEqual(Array.from(await zip.file("0009-423_1.jpg").async("uint8array")), [0xff, 0xd8, 0xff, 2]);
 });
 
+test("el ZIP incluye todas las secundarias en orden sin repetir la principal ni asumir su posición", async () => {
+  const producto = fila("10498-1").producto;
+  const principal = "https://example.invalid/principal.jpg";
+  const otras = [1, 2, 3, 4].map((numero) => `https://example.invalid/secundaria-${numero}.jpg`);
+  producto.imagen_principal = principal;
+  producto.imagenes = [otras[0], principal, otras[1], otras[0], otras[2], otras[3]];
+  const original = structuredClone(producto);
+  globalThis.fetch = async (url) => {
+    consultas.push(url);
+    const posicion = [principal, ...otras].indexOf(url);
+    assert.notEqual(posicion, -1);
+    return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([0xff, 0xd8, 0xff, posicion]).buffer };
+  };
+  const zip = await JSZip.loadAsync(await (await construirZipImagenes([{ producto }])).arrayBuffer());
+  assert.deepEqual(Object.keys(zip.files), ["10498-1.jpg", "10498-1_1.jpg", "10498-1_2.jpg", "10498-1_3.jpg", "10498-1_4.jpg"]);
+  for (let posicion = 0; posicion <= otras.length; posicion++) {
+    const nombre = `10498-1${posicion ? `_${posicion}` : ""}.jpg`;
+    assert.deepEqual(Array.from(await zip.file(nombre).async("uint8array")), [0xff, 0xd8, 0xff, posicion]);
+  }
+  assert.deepEqual(consultas, [principal, ...otras]);
+  assert.deepEqual(producto, original);
+});
+
+test("un error HTTP de cualquier secundaria impide devolver un lote incompleto", async () => {
+  const producto = fila("40105").producto;
+  const tercera = "https://example.invalid/40105-secundaria-2.jpg";
+  producto.imagenes.push(tercera);
+  const descargar = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url === tercera) return { ok: false, status: 404 };
+    return descargar(url);
+  };
+  await assert.rejects(construirZipImagenes([{ producto }]), (error) => {
+    assert.equal(error.code, "IMAGEN_DESCARGA_FALLIDA");
+    assert.deepEqual(error.skus, ["40105"]);
+    assert.match(error.message, /secundaria 2.*40105.*HTTP 404/);
+    return true;
+  });
+});
+
+test("una secundaria vacía, interrumpida o que contiene HTML detiene la preparación", async () => {
+  const descargar = globalThis.fetch;
+  const respuestas = [
+    { respuesta: { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new ArrayBuffer(0) }, code: "IMAGEN_VACIA" },
+    { respuesta: { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => { throw new Error("Stream interrumpido"); } }, code: "IMAGEN_DESCARGA_FALLIDA" },
+    { respuesta: { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new TextEncoder().encode("<html>Error CDN</html>").buffer }, code: "IMAGEN_INVALIDA" },
+  ];
+  for (const { respuesta, code } of respuestas) {
+    globalThis.fetch = async (url) => url.includes("secundaria") ? respuesta : descargar(url);
+    await assert.rejects(construirZipImagenes([fila("40105")]), (error) => {
+      assert.equal(error.code, code);
+      assert.match(error.message, /secundaria 1.*40105/);
+      return true;
+    });
+  }
+  globalThis.fetch = async (url) => {
+    if (url.includes("secundaria")) throw new Error("Sin conexión");
+    return descargar(url);
+  };
+  await assert.rejects(construirZipImagenes([fila("40105")]), { code: "IMAGEN_DESCARGA_FALLIDA" });
+});
+
+test("una foto sin URL o sin principal se detecta antes de descargar el lote", async () => {
+  const sinPrincipal = fila("B");
+  sinPrincipal.producto.imagen_principal = null;
+  await assert.rejects(construirZipImagenes([fila("A"), sinPrincipal]), { code: "IMAGEN_PRINCIPAL_AUSENTE" });
+  const sinSecundaria = fila("B");
+  sinSecundaria.producto.imagenes.push("");
+  await assert.rejects(construirZipImagenes([fila("A"), sinSecundaria]), { code: "IMAGENES_INVALIDAS" });
+  assert.deepEqual(consultas, []);
+});
+
+test("las secundarias a partir de la segunda también se comprueban contra otros SKU", async () => {
+  const primera = fila("A");
+  primera.producto.imagenes.push("https://example.invalid/otra.jpg");
+  await assert.rejects(construirZipImagenes([primera, fila("A_2")]), { code: "NOMBRE_IMAGEN_DUPLICADO" });
+  assert.deepEqual(consultas, []);
+});
+
 test("el respaldo local mantiene dos SKU completos de la misma base y solo sus imágenes principales", async () => {
   const filas = [fila("0009-423/1"), fila("0009-423/2")];
   const antes = structuredClone(filas);
