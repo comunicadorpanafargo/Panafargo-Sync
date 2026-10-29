@@ -77,6 +77,21 @@ export function nombreArchivoImagenLocal(sku, extension = ".jpg") {
   return `${nombre}${extension.toLowerCase()}`;
 }
 
+/**
+ * Adjunto del control de imagen por fila de Rappi. Su pipe concatena el
+ * nombre recibido en una URL sin escapar %, por lo que no sirve el nombre
+ * codificado de la copia local. La identidad sigue siendo el SKU de la fila.
+ */
+export async function nombreArchivoImagenRappi(sku, extension = ".jpg") {
+  if (typeof sku !== "string" || !sku || sku.trim() !== sku || /[\u0000-\u001f\u007f]/.test(sku)) {
+    throw new Error("La imagen necesita un SKU completo válido.");
+  }
+  if (![".jpg", ".png"].includes(extension)) throw new Error("El adjunto de Rappi debe ser JPG o PNG.");
+  const hash = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(sku));
+  const nombre = [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `pf_img_${nombre}${extension}`;
+}
+
 function obtenerExtension(url) {
   const match = url.split("?")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i);
   return match ? `.${match[1].toLowerCase()}` : ".jpg";

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { createRequire } from "node:module";
-import { descargarImagenPrincipal, nombreArchivoImagenLocal } from "../images/image-handler.js";
+import { createHash } from "node:crypto";
+import { descargarImagenPrincipal, nombreArchivoImagenLocal, nombreArchivoImagenRappi } from "../images/image-handler.js";
 import { construirPaqueteImagenesLocales, construirPaqueteImagenesLocalesDesdePreparadas, construirZipImagenes, prepararImagenesIndividualesPorSku, ErrorImagenesRappi } from "../rappi/rappi-images-zip.js";
 
 const require = createRequire(import.meta.url);
@@ -48,6 +49,8 @@ function fila(sku) {
   } };
 }
 
+const nombreRappiEsperado = (sku, extension = ".jpg") => `pf_img_${createHash("sha256").update(sku, "utf8").digest("hex")}${extension}`;
+
 test("los nombres locales son planos y reversibles, incluidos barras, porcentajes y nombres reservados", () => {
   const skus = ["0009-423", "40593/3", "A/B", "A%2FB", "CON", "con.txt", "LPT1", "A?B:C*D\"E<F>G|H\\I", ".", ".."];
   for (const sku of skus) {
@@ -58,6 +61,34 @@ test("los nombres locales son planos y reversibles, incluidos barras, porcentaje
   }
   assert.equal(nombreArchivoImagenLocal("0009-423", ".JPG"), "0009-423.jpg");
   assert.notEqual(nombreArchivoImagenLocal("A/B"), nombreArchivoImagenLocal("A%2FB"));
+});
+
+test("los adjuntos de Rappi tienen nombres ASCII estables a partir del SKU completo", async () => {
+  const skus = [
+    "11351/MoveForward", "11351/YourDream", "0001/A", "1/A", "ABC/hola", "abc/hola",
+    "A/B", "A%2FB", "A\\B", "A?B#C", "CON", "NUL", "cuaderno/niño🎨", `12345/${"diseño".repeat(1000)}`,
+  ];
+  const nombres = [];
+  for (const sku of skus) {
+    const nombre = await nombreArchivoImagenRappi(sku, ".png");
+    assert.equal(nombre, nombreRappiEsperado(sku, ".png"), "El hash coincide con SHA-256 UTF-8 calculado con node:crypto.");
+    assert.equal(await nombreArchivoImagenRappi(sku, ".png"), nombre);
+    assert.match(nombre, /^pf_img_[a-f0-9]{64}\.png$/);
+    assert.doesNotMatch(nombre, /[%\/\\?#\s]/);
+    assert.ok(nombre.length <= 80, "Un SKU largo no produce una ruta ni un nombre demasiado largo.");
+    nombres.push(nombre);
+  }
+  assert.equal(new Set(nombres).size, skus.length, "Se distinguen diseños, ceros iniciales, mayúsculas y escapes literales.");
+  assert.equal(await nombreArchivoImagenRappi(skus[0]), nombreRappiEsperado(skus[0]));
+});
+
+test("un nombre remoto inválido se rechaza en lugar de recurrir al nombre local codificado", async () => {
+  for (const sku of [null, "", " 11351/A", "11351/A ", "11351\nA"]) {
+    await assert.rejects(nombreArchivoImagenRappi(sku), /SKU completo válido/);
+  }
+  for (const extension of [".webp", ".gif", ".JPG", "png", ".jpg/otra"]) {
+    await assert.rejects(nombreArchivoImagenRappi("11351/A", extension), /JPG o PNG/);
+  }
 });
 
 test("la descarga individual usa un nombre plano y conserva el SKU original", async () => {
@@ -73,7 +104,7 @@ test("la carga masiva no inventa equivalencias para un SKU con separador ni desc
   for (const sku of ["40593/3", "40593\\3"]) {
     await assert.rejects(construirZipImagenes([fila(sku)]), (error) => {
       assert.ok(error instanceof ErrorImagenesRappi);
-      assert.equal(error.code, "SKU_IMAGEN_REQUIERE_ASIGNACION_MANUAL");
+      assert.equal(error.code, "SKU_IMAGEN_REQUIERE_CARGA_POR_FILA");
       assert.deepEqual(error.skus, [sku]);
       return true;
     });
@@ -98,7 +129,7 @@ test("el ZIP automático conserva las imágenes y los nombres de SKU normales co
   assert.deepEqual(Array.from(await zip.file("0009-423_1.jpg").async("uint8array")), [0xff, 0xd8, 0xff, 2]);
 });
 
-test("el paquete manual mantiene dos SKU completos de la misma base y solo sus imágenes principales", async () => {
+test("el respaldo local mantiene dos SKU completos de la misma base y solo sus imágenes principales", async () => {
   const filas = [fila("0009-423/1"), fila("0009-423/2")];
   const antes = structuredClone(filas);
   const blob = await construirPaqueteImagenesLocales(filas);
@@ -107,7 +138,7 @@ test("el paquete manual mantiene dos SKU completos de la misma base y solo sus i
     "0009-423%2F1.jpg", "0009-423%2F2.jpg", "LEEME.txt", "mapa_imagenes.csv", "mapa_imagenes.json",
   ]);
   assert.deepEqual(JSON.parse(await zip.file("mapa_imagenes.json").async("string")), {
-    uso: "asignacion_manual",
+    uso: "respaldo_carga_automatica_por_sku",
     imagenes: [
       { sku: "0009-423/1", archivo: "0009-423%2F1.jpg" },
       { sku: "0009-423/2", archivo: "0009-423%2F2.jpg" },
@@ -210,7 +241,7 @@ test("la preparación individual conserva los SKU completos y la foto principal 
   };
   const imagenes = await prepararImagenesIndividualesPorSku(filas);
   assert.deepEqual(imagenes.map(({ sku }) => sku), ["34534/hola", "34534/adios", "10498-1"]);
-  assert.deepEqual(imagenes.map(({ nombre }) => nombre), ["34534%2Fhola.jpg", "34534%2Fadios.jpg", "10498-1.jpg"]);
+  assert.deepEqual(imagenes.map(({ nombre }) => nombre), filas.map(({ producto }) => nombreRappiEsperado(producto.sku)));
   for (const [indice, imagen] of imagenes.entries()) {
     assert.equal(imagen.tipoMime, "image/jpeg");
     assert.deepEqual(Array.from(Buffer.from(imagen.base64, "base64")), [0xff, 0xd8, 0xff, indice]);
@@ -228,12 +259,16 @@ test("el respaldo usa los mismos bytes preparados para Rappi sin descargar otra 
   assert.equal(consultas.length, 3, "Crear el respaldo no hace peticiones adicionales.");
   const zip = await JSZip.loadAsync(await blob.arrayBuffer());
   const mapa = JSON.parse(await zip.file("mapa_imagenes.json").async("string"));
+  assert.equal(mapa.uso, "respaldo_carga_automatica_por_sku");
   assert.deepEqual(mapa.imagenes, imagenes.map(({ sku, nombre }) => ({ sku, archivo: nombre })));
   for (const imagen of imagenes) {
     assert.deepEqual(await zip.file(imagen.nombre).async("uint8array"), Uint8Array.from(Buffer.from(imagen.base64, "base64")));
   }
   assert.ok(zip.file("LEEME.txt"));
   assert.ok(zip.file("mapa_imagenes.csv"));
+  const instrucciones = await zip.file("LEEME.txt").async("string");
+  assert.match(instrucciones, /carga las fotos automaticamente/);
+  assert.doesNotMatch(instrucciones, /asignacion manual|manualmente|asigna cada imagen/i);
   assert.deepEqual(imagenes, original);
 });
 
@@ -248,11 +283,12 @@ test("el respaldo preparado rechaza rutas, identidad inválida, base64 dañado y
   assert.equal(consultas.length, 1);
 });
 
-test("el respaldo preparado impide SKU repetidos y nombres que colisionan en Windows", async () => {
+test("el respaldo preparado impide SKU repetidos y distingue identidades que solo difieren en mayúsculas", async () => {
   const imagenes = await prepararImagenesIndividualesPorSku([fila("ABC/hola"), fila("abc/hola")]);
-  for (const entradas of [[imagenes[0], imagenes[0]], imagenes]) {
-    await assert.rejects(construirPaqueteImagenesLocalesDesdePreparadas(entradas), { code: "NOMBRE_IMAGEN_DUPLICADO" });
-  }
+  await assert.rejects(construirPaqueteImagenesLocalesDesdePreparadas([imagenes[0], imagenes[0]]), { code: "NOMBRE_IMAGEN_DUPLICADO" });
+  const zip = await JSZip.loadAsync(await (await construirPaqueteImagenesLocalesDesdePreparadas(imagenes)).arrayBuffer());
+  assert.notEqual(imagenes[0].nombre.toLowerCase(), imagenes[1].nombre.toLowerCase());
+  for (const imagen of imagenes) assert.ok(zip.file(imagen.nombre));
 });
 
 test("los SKU duplicados o inválidos detienen la preparación individual antes de descargar", async () => {
@@ -313,7 +349,7 @@ test("WebP se recodifica a JPEG solo para el adjunto individual, con nombre y MI
   diseno.producto.imagen_principal = url;
   const [imagen] = await prepararImagenesIndividualesPorSku([diseno]);
   assert.equal(imagen.sku, "34534/hola");
-  assert.equal(imagen.nombre, "34534%2Fhola.jpg");
+  assert.equal(imagen.nombre, nombreRappiEsperado(diseno.producto.sku));
   assert.equal(imagen.tipoMime, "image/jpeg");
   assert.deepEqual(Array.from(Buffer.from(imagen.base64, "base64")), Array.from(jpeg));
   assert.deepEqual(consultas, [url, url], "Se usa la URL propia de la variante en ambos modos.");

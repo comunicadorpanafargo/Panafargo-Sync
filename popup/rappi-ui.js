@@ -167,7 +167,7 @@ function actualizarControles() {
   });
   const aviso = el("aviso-imagenes-disenos");
   aviso.hidden = !imagenesManuales(lista);
-  aviso.textContent = "Este lote incluye SKU con /. Crear productos descargará el Excel y el respaldo, y después cargará cada imagen en la fila de su SKU completo. El ZIP de respaldo es para consulta o carga individual; no lo subas mediante Cárgalas aquí.";
+  aviso.textContent = "Las fotos de cada diseño se cargarán automáticamente en su producto. El Excel y el ZIP de respaldo también se descargan automáticamente. El ZIP es solo una copia de respaldo; no debes subirlo a Mi Tienda.";
   if (bloqueado !== ocupacionNotificada) {
     ocupacionNotificada = bloqueado;
     window.dispatchEvent(new CustomEvent("panafargo:ocupado", { detail: { ocupado: bloqueado, origen: "rappi" } }));
