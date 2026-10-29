@@ -6,8 +6,9 @@ import { test } from "node:test";
 const contexto = vm.createContext({ File, atob, setTimeout, Date, Uint8Array });
 vm.runInContext(await readFile(new URL("../rappi/mi-tienda-imagenes.js", import.meta.url), "utf8"), contexto);
 const { validar } = contexto.PanafargoImagenesPorSku;
+const nombreSeguro = (sku) => `imagen_${Buffer.from(sku, "utf8").toString("hex")}.png`;
 const imagen = (sku, contenido = "foto de prueba") => ({
-  sku, nombre: `${encodeURIComponent(sku)}.png`, tipoMime: "image/png", base64: btoa(contenido),
+  sku, nombre: nombreSeguro(sku), tipoMime: "image/png", base64: btoa(contenido),
 });
 
 test("el transporte entrega un File independiente por SKU completo sin usar el sufijo como identidad", async () => {
@@ -20,7 +21,7 @@ test("el transporte entrega un File independiente por SKU completo sin usar el s
   for (const [indice, sku] of skus.entries()) {
     const archivo = paquete.archivos.get(sku);
     assert.ok(archivo instanceof File);
-    assert.equal(archivo.name, `${encodeURIComponent(sku)}.png`);
+    assert.equal(archivo.name, nombreSeguro(sku));
     assert.equal(archivo.type, "image/png");
     assert.equal(await archivo.text(), `foto ${indice}`);
   }
@@ -43,6 +44,27 @@ test("un SKU incompleto o caracteres de control detienen el paquete antes del DO
 test("la preparación no acepta adjuntos dañados, nombres de ruta ni formatos fuera de JPG/PNG", () => {
   for (const campos of [{ base64: "@imagenrota" }, { base64: "" }, { nombre: "A/hola.png" }, { tipoMime: "image/webp" }]) {
     assert.throws(() => validar([{ ...imagen("A/hola"), ...campos }], ["A/hola"]), /dañada|JPG\/PNG válido/);
+  }
+});
+
+test("el control remoto rechaza nombres con percent-encoding, separadores y otros caracteres de URL", () => {
+  const sku = "11351/MoveForward";
+  for (const nombre of [
+    "11351%2FMoveForward.png", "11351%252FMoveForward.png", "11351/MoveForward.png",
+    "11351\\MoveForward.png", "foto?version=1.png", "foto#detalle.png", "foto con espacios.png",
+    "foto_niño.png", `${"a".repeat(181)}.png`, ".png", "foto.webp",
+  ]) {
+    assert.throws(() => validar([{ ...imagen(sku), nombre }], [sku]), /nombre seguro para Rappi/);
+  }
+});
+
+test("nombres iguales o que solo cambian de mayúsculas no pueden sobrescribir fotos de otros SKU", () => {
+  const skus = ["11351/MoveForward", "11351/YourDream"];
+  for (const segundo of ["imagen_unica.png", "IMAGEN_UNICA.PNG"]) {
+    assert.throws(() => validar([
+      { ...imagen(skus[0]), nombre: "imagen_unica.png" },
+      { ...imagen(skus[1]), nombre: segundo },
+    ], skus), /mismo nombre de imagen/);
   }
 });
 

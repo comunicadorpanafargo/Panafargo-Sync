@@ -1,18 +1,17 @@
 // ============================================================
 // rappi/rappi-images-zip.js
 // ============================================================
-// V4 — arma el .zip de imágenes que exige el paso "¿Prefieres
-// cargar múltiples imágenes a la vez? Cárgalas aquí" de Mi Tienda
-// (ese paso solo acepta un input[type=file][accept=".zip"], no
-// imágenes sueltas). Cada imagen se nombra por SKU — el mismo SKU
-// que identifica la fila del producto en la plantilla .xlsx — para
-// que Rappi pueda asociarlas automáticamente al revisar el lote.
+// Prepara imágenes para los dos recorridos automáticos de Mi Tienda:
+// ZIP con nombres SKU para referencias sin separadores y adjuntos por fila
+// para SKU con /. En este último caso, el SKU completo identifica la fila
+// y el archivo usa un nombre ASCII seguro para las URL del CDN de Rappi.
+// El ZIP adicional de ese recorrido se descarga solo como respaldo.
 //
 // Requiere que vendor/jszip.min.js esté cargado ANTES de este
 // módulo (ver popup.html), exponiendo window.JSZip.
 // ============================================================
 
-import { nombreArchivoImagenLocal } from "../images/image-handler.js";
+import { nombreArchivoImagenLocal, nombreArchivoImagenRappi } from "../images/image-handler.js";
 import { analizarSku } from "../utils/sku.js";
 
 export class ErrorImagenesRappi extends Error {
@@ -119,7 +118,7 @@ export async function prepararImagenesIndividualesPorSku(filasListas) {
     }
     imagenes.push({
       sku: producto.sku,
-      nombre: nombreArchivoImagenLocal(producto.sku, imagen.extension),
+      nombre: await nombreArchivoImagenRappi(producto.sku, imagen.extension),
       tipoMime,
       base64: btoa(binario),
     });
@@ -128,7 +127,7 @@ export async function prepararImagenesIndividualesPorSku(filasListas) {
 }
 
 /**
- * Respaldo LOCAL para asignar imágenes manualmente por SKU completo. Solo
+ * Respaldo LOCAL de la carga automática por SKU completo. Solo
  * contiene la imagen principal por publicación y un mapa de nombres; NO es
  * un ZIP importable de Rappi. El portal no ha confirmado cómo relaciona
  * nombres de archivo con SKU que contienen separadores.
@@ -167,13 +166,14 @@ export async function construirPaqueteImagenesLocalesDesdePreparadas(imagenes) {
   }
   const nombres = new Set();
   const skus = new Set();
-  const entradas = imagenes.map((imagen) => {
+  const entradas = [];
+  for (const imagen of imagenes) {
     const { sku, nombre, tipoMime, base64 } = imagen || {};
     let extension;
     try {
       if (analizarSku(sku).skuCompleto !== sku) throw new Error();
       extension = tipoMime === "image/png" ? ".png" : tipoMime === "image/jpeg" ? ".jpg" : null;
-      if (!extension || nombre !== nombreArchivoImagenLocal(sku, extension)) throw new Error();
+      if (!extension || nombre !== await nombreArchivoImagenRappi(sku, extension)) throw new Error();
       if (typeof base64 !== "string" || !base64) throw new Error();
     } catch {
       throw new ErrorImagenesRappi("IMAGEN_PREPARADA_INVALIDA", "El respaldo necesita imágenes JPG/PNG con su SKU completo y nombre seguro.", [sku]);
@@ -190,8 +190,8 @@ export async function construirPaqueteImagenesLocalesDesdePreparadas(imagenes) {
     if (!binario.length || binario.length > LIMITE_BYTES_IMAGEN) {
       throw new ErrorImagenesRappi("IMAGEN_PREPARADA_INVALIDA", `La imagen preparada del SKU ${sku} debe tener contenido y no superar 1 MB.`, [sku]);
     }
-    return { sku, archivo: nombre, bytes: Uint8Array.from(binario, (letra) => letra.charCodeAt(0)) };
-  });
+    entradas.push({ sku, archivo: nombre, bytes: Uint8Array.from(binario, (letra) => letra.charCodeAt(0)) });
+  }
   return empaquetarImagenesLocales(entradas);
 }
 
@@ -205,18 +205,18 @@ async function empaquetarImagenesLocales(entradas) {
   }
 
   // JSON conserva los SKU exactamente, incluidos ceros iniciales y símbolos.
-  zip.file("mapa_imagenes.json", JSON.stringify({ uso: "asignacion_manual", imagenes: mapa }, null, 2));
+  zip.file("mapa_imagenes.json", JSON.stringify({ uso: "respaldo_carga_automatica_por_sku", imagenes: mapa }, null, 2));
   const csv = [
     "SKU completo,Archivo de imagen",
     ...mapa.map(({ sku, archivo }) => `${celdaCsvTexto(sku)},${celdaCsvTexto(archivo)}`),
   ].join("\r\n");
   zip.file("mapa_imagenes.csv", `\uFEFF${csv}\r\n`);
   zip.file("LEEME.txt", [
-    "PAQUETE LOCAL PARA ASIGNACION MANUAL DE IMAGENES",
+    "RESPALDO DE LA CARGA AUTOMATICA DE IMAGENES",
     "Este archivo NO es el ZIP de carga masiva de Rappi.",
     "No subas este ZIP en Cárgalas aquí: ese importador no tiene una vinculación confirmada para los nombres codificados.",
-    "Extrae los archivos y asigna cada imagen al SKU completo indicado en el mapa.",
-    "Los nombres codificados evitan que / y otros caracteres se conviertan en rutas.",
+    "La extension carga las fotos automaticamente en la fila de cada SKU completo.",
+    "Este respaldo se guarda con el Excel; no necesitas cargar sus archivos por separado.",
     "El SKU original se conserva exactamente en mapa_imagenes.json.",
     "El CSV protege las celdas que una hoja de calculo podria interpretar como formulas.",
   ].join("\r\n"));
@@ -240,8 +240,8 @@ function validarNombresParaCargaMasiva(filasListas) {
     }
     if (/[\/\\]/.test(sku)) {
       throw new ErrorImagenesRappi(
-        "SKU_IMAGEN_REQUIERE_ASIGNACION_MANUAL",
-        `El SKU ${sku} contiene un separador. Conserva el SKU completo en Rappi y asigna su imagen manualmente con el paquete local; la carga masiva no tiene una correspondencia de nombres confirmada para ese SKU.`,
+        "SKU_IMAGEN_REQUIERE_CARGA_POR_FILA",
+        `El SKU ${sku} contiene un separador. Usa Crear productos para que la extensión cargue su imagen automáticamente en la fila del SKU completo; ese respaldo no se importa mediante el ZIP masivo.`,
         [sku]
       );
     }

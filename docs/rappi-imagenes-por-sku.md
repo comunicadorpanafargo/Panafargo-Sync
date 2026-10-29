@@ -1,12 +1,30 @@
 # Imágenes de SKU con `/`: causa, contrato y comprobación
 
-Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.4.
+Revisión del 29 de octubre de 2026. Implementación de Panafargo Sync 4.1.5.
 
 ## Problema reproducido
 
 La versión 4.0.0 (`9944342`) introducía el SKU en el nombre de la entrada del ZIP: `34534/hola.png`. En un ZIP eso es una ruta de carpeta; su nombre final es `hola.png`. `67890/hola.png` tiene el mismo nombre final. Se reprodujo con la función original, JSZip incluido y datos sintéticos. La plantilla de creación conserva el SKU completo en D; no tiene una columna distinta de nombre de imagen ni una hoja de equivalencias de archivos. La asociación usa el SKU prefijado en G y tampoco define nombres de imágenes.
 
 El usuario observó que en Rappi se perdía la parte anterior a `/`. El frontend público envía el ZIP completo a una URL firmada y consulta su procesamiento; el matching ocurre en el servidor. No permite confirmar si ese servidor compara rutas completas, nombres finales o nombres decodificados. Por ello, sustituir `/` por `_`, `%2F` u otro símbolo no constituye una solución demostrada si el SKU del producto sigue siendo el original.
+
+## Vista previa rota observada en 4.1.4
+
+El usuario mostró una imagen rota al iniciar la carga de fotos y después compartió [la URL de esa imagen en Rappi](https://images.rappi.com/products/1793300815577_73087524-8739-488e-8156-1a82ab70a725_11351%2FMoveForward.png). En la revisión de las fotografías fuente consultadas, los PNG tenían 1024 × 1024 píxeles y pesaban menos de 1 MB. Su contenido conservó el SHA-256 al pasar por base64 y reconstruirse como archivo.
+
+Las consultas GET del 29 de octubre sobre la foto reportada dieron estos resultados:
+
+| Ruta consultada | Respuesta observada |
+| --- | --- |
+| Nombre con `11351%2FMoveForward.png`, sin tamaño | 503 y HTML de error de CloudFront/Lambda |
+| El mismo nombre con `?d=250x250` | 200, PNG de 256 × 256 |
+| Nombre con `11351%252FMoveForward.png`, sin tamaño | 200, PNG original de 1024 × 1024 y 278.890 bytes |
+| Nombre con `%252F` y `?d=250x250` | 502 y HTML de error |
+| Nombre con `%2F` y `?d=250x250&panafargo_img_rev=1` | 200, PNG de 256 × 256 |
+
+El PNG original recuperado desde Rappi tiene SHA-256 `2005455833387babeaec75f2d7a318a577c3ac726a89ea0d74dfb46829f0e134`, idéntico al archivo de Shopify. Por tanto, **la fotografía sí se subió y se conservó íntegra en Rappi**. El problema observado estaba en su lectura o visualización. Las diferencias entre rutas son compatibles con una ambigüedad de codificación y un fallo transitorio del CDN; la vista previa respondió correctamente durante la revisión y no puede describirse como un fallo permanente. Estas consultas posteriores tampoco reconstruyen la respuesta exacta del instante de la captura.
+
+El frontend público construye la ruta de imagen concatenando el nombre devuelto por el servidor, sin escaparlo como un segmento de URL. Los archivos preparados en 4.1.4 incluían `%2F` en sus nombres. La corrección usa nombres ASCII sin `%` para eliminar esa ambigüedad. También vuelve a solicitar la vista previa nueva con un número limitado de reintentos: esperar solamente a que una imagen rota tuviera dimensiones no iniciaba otra petición de esa imagen.
 
 ## Contrato de carga individual
 
@@ -32,13 +50,15 @@ El bundle de catálogo permite comprobar:
 
 Para un lote que contenga separadores, `Crear productos` genera el Excel con los SKU completos y un manifiesto de imágenes por SKU, no un ZIP para el importador masivo. Cada imagen corresponde a la foto principal de su publicación. Se usan JPG/PNG; WebP se recodifica a JPEG sin aumentar las dimensiones. Un presupuesto de transporte evita enviar un mensaje excesivamente grande y pide dividir la selección si hace falta.
 
+Desde 4.1.5, el nombre del archivo que se adjunta a cada fila es ASCII y se deriva mediante SHA-256 del SKU completo, con la extensión de su formato. No contiene `/`, `%` ni rutas. Este nombre permite transportar y leer la imagen; la publicación se sigue identificando mediante el SKU completo y los IDs internos de su fila. No se cambia el SKU del Excel, el inventario, los precios ni la asociación para ajustarlos al nombre de la foto.
+
 El mismo botón descarga el Excel y un respaldo ZIP antes de enviar el lote. Para los diseños, el respaldo se construye desde los bytes ya preparados para los controles individuales; no vuelve a consultar las fotos. Para SKU normales, se descarga el mismo ZIP que se enviará al portal. `chrome.downloads.download()` entrega un ID de inicio: la extensión espera el estado real `complete` de ambas descargas mediante eventos y consulta de Chrome. Cancelación, interrupción, borrado o timeout detienen el envío.
 
 Antes de adjuntar la primera imagen se recorren **todas las páginas** y se comprueban SKU exactos, ausencia de duplicados/faltantes/filas ajenas y un único input disponible por fila. Luego se vuelve al inicio y se asignan las imágenes en una segunda pasada, comprobando que el lote y la paginación sigan siendo los mismos. No se modifica ni el SKU de Shopify ni el SKU del Excel de creación.
 
-Tras cada `change`, se espera una URL HTTP(S) nueva en `img.product-image`, una imagen cargada con dimensiones reales y la ausencia del loader. El input vacío no se toma como error ni como confirmación. Una imagen anterior, URL `data:`, imagen rota, procesamiento permanente, cambio de filas o timeout detiene el proceso antes de pulsar Crear productos. Cuando todas las imágenes están confirmadas se utiliza el recorrido existente de creación; la asociación final sigue siendo una operación independiente que confirma el usuario.
+Tras cada `change`, se espera una URL HTTP(S) nueva en `img.product-image`, una imagen cargada con dimensiones reales y la ausencia del loader. El input vacío no se toma como error ni como confirmación. Si esa URL nueva aún no puede mostrarse, se permiten tres reintentos GET, con esperas de 1, 2 y 4 segundos. Solo se consulta la imagen nueva de la misma fila: no se vuelve a enviar el archivo, no se toma la imagen anterior como éxito y no se pulsa Crear durante los reintentos. Una imagen anterior, URL `data:`, imagen que sigue rota, procesamiento permanente, cambio de filas o timeout detiene el proceso antes de pulsar Crear productos. Cuando todas las imágenes están confirmadas se utiliza el recorrido existente de creación; la asociación final sigue siendo una operación independiente que confirma el usuario.
 
-Los lotes sin separadores conservan su ZIP automático. El paquete de respaldo para los lotes con `/` contiene archivos planos seguros y un mapa de SKU completos; **no debe subirse mediante «Cárgalas aquí»**. Es una ayuda para consulta o carga individual si se necesita recuperar el trabajo.
+La carga de las fotos es automática, también cuando se usan los controles individuales de cada fila. Los lotes sin separadores conservan su ZIP automático. El paquete de respaldo para los lotes con `/` se descarga automáticamente y contiene archivos planos seguros y un mapa de SKU completos. Es una copia para conservar: **no debe subirse a Mi Tienda ni requiere extraer o asignar las fotos a mano**.
 
 ## Nueva plantilla y descarte del borrador
 

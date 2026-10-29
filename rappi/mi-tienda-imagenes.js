@@ -21,14 +21,17 @@ globalThis.PanafargoImagenesPorSku = (() => {
     }
     const esperados = new Set(skus);
     const archivos = new Map();
+    const nombres = new Set();
     for (const imagen of imagenes) {
       if (!imagen || !validos(imagen.sku) || !esperados.has(imagen.sku) || archivos.has(imagen.sku)) {
         throw new Error("El mapa de imágenes no corresponde exactamente a los SKU completos del lote.");
       }
-      if (typeof imagen.nombre !== "string" || !imagen.nombre || /[\/\\\u0000-\u001f\u007f]/.test(imagen.nombre)
+      if (typeof imagen.nombre !== "string" || !/^[a-z0-9][a-z0-9_.-]{0,179}\.(?:jpg|jpeg|png)$/i.test(imagen.nombre)
         || !["image/jpeg", "image/png"].includes(imagen.tipoMime) || typeof imagen.base64 !== "string" || !imagen.base64) {
-        throw new Error(`La imagen del SKU ${imagen.sku} no tiene un archivo JPG/PNG válido.`);
+        throw new Error(`La imagen del SKU ${imagen.sku} no tiene un archivo JPG/PNG válido con nombre seguro para Rappi. Actualiza la extensión y recarga Mi Tienda (F5).`);
       }
+      if (nombres.has(imagen.nombre.toLowerCase())) throw new Error("Dos SKU generan el mismo nombre de imagen. No se enviaron los archivos.");
+      nombres.add(imagen.nombre.toLowerCase());
       let binario;
       try { binario = atob(imagen.base64); } catch { throw new Error(`La imagen del SKU ${imagen.sku} está dañada.`); }
       if (!binario.length || binario.length > 1_000_000) {
@@ -86,6 +89,7 @@ globalThis.PanafargoImagenesPorSku = (() => {
 
   async function asignar(paquete, {
     alProgreso = () => {}, timeoutPaginaMs = 60000, timeoutImagenMs = 60000, intervaloMs = 150,
+    reintentosVistaMs = [1000, 2000, 4000],
   } = {}) {
     const esperados = new Set(paquete.skus);
     const confirmados = new Set();
@@ -159,7 +163,17 @@ globalThis.PanafargoImagenesPorSku = (() => {
             };
             const fila = buscar();
             if (fila.querySelector(LOADER)) throw new Error(`El SKU ${sku} ya tiene una imagen en procesamiento.`);
-            const anterior = fila.querySelector(IMAGEN)?.getAttribute("src") || "";
+            const rutaSinReintento = (src) => {
+              try {
+                const url = new URL(src);
+                url.searchParams.delete("panafargo_img_rev");
+                return url.href;
+              } catch { return src || ""; }
+            };
+            const anterior = rutaSinReintento(fila.querySelector(IMAGEN)?.src);
+            let respuesta = null;
+            let reintentos = 0;
+            let siguienteIntento = 0;
             alProgreso({ sku, completadas: confirmados.size, total: esperados.size });
             const inputs = fila.querySelectorAll(INPUT);
             if (inputs.length !== 1 || inputs[0].disabled) throw new Error(`El control de imagen de ${sku} cambió.`);
@@ -173,9 +187,29 @@ globalThis.PanafargoImagenesPorSku = (() => {
             await esperarResultado(() => {
               const actual = buscar();
               const imagen = actual.querySelector(IMAGEN);
-              const src = imagen?.getAttribute("src") || "";
-              return src && src !== anterior && /^https?:/i.test(imagen.src)
-                && imagen.complete && imagen.naturalWidth > 0 && !actual.querySelector(LOADER);
+              const src = rutaSinReintento(imagen?.src);
+              if (!src || src === anterior || !/^https?:/i.test(src)) return false;
+              if (src !== respuesta) {
+                respuesta = src;
+                reintentos = 0;
+                siguienteIntento = Date.now() + reintentosVistaMs[0];
+              }
+              if (actual.querySelector(LOADER)) return false;
+              if (imagen.complete && imagen.naturalWidth > 0) return true;
+              // Un <img> que ya falló no vuelve a consultar el CDN solo por
+              // esperar. Reintentar únicamente la vista NUEVA, no el upload,
+              // y conservar los parámetros de transformación del portal.
+              if (imagen.complete && reintentos < reintentosVistaMs.length && Date.now() >= siguienteIntento) {
+                const url = new URL(respuesta);
+                const firmada = [...url.searchParams.keys()].some((clave) => /signature|token|^x-amz-|^sig$/i.test(clave));
+                if (!firmada) {
+                  reintentos++;
+                  url.searchParams.set("panafargo_img_rev", `${Date.now()}-${reintentos}`);
+                  imagen.src = url.href;
+                  siguienteIntento = Date.now() + reintentosVistaMs[reintentos];
+                }
+              }
+              return false;
             }, timeoutImagenMs, intervaloMs, `No se confirmó una imagen nueva para el SKU ${sku}. Revisa el error de Mi Tienda.`);
             confirmados.add(sku);
             alProgreso({ sku, completadas: confirmados.size, total: esperados.size });
