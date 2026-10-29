@@ -15,10 +15,12 @@
 
 import { SHOPIFY_CONFIG } from "./config.js";
 import { logger } from "../utils/logger.js";
+import { analizarSku, obtenerSkuBase } from "../utils/sku.js";
 
 const GRAPHQL_QUERY = `
-  query buscarProductoPorSku($query: String!) {
-    productVariants(first: 1, query: $query) {
+  query buscarProductosPorSku($query: String!, $after: String) {
+    productVariants(first: 50, query: $query, after: $after) {
+      pageInfo { hasNextPage endCursor }
       edges {
         node {
           id
@@ -30,6 +32,7 @@ const GRAPHQL_QUERY = `
           inventoryQuantity
           availableForSale
           selectedOptions { name value }
+          image { url altText }
           inventoryItem {
             measurement {
               weight { value unit }
@@ -45,9 +48,10 @@ const GRAPHQL_QUERY = `
             category { fullName }
             descriptionHtml
             handle
+            onlineStoreUrl
             tags
             featuredImage { url altText }
-            images(first: 10) {
+            images(first: 2) {
               edges { node { url altText } }
             }
           }
@@ -123,18 +127,13 @@ async function obtenerAccessToken() {
   return nuevoCache.access_token;
 }
 
-/**
- * Consulta un producto en Shopify a partir de su SKU.
- * @param {string} sku
- * @returns {Promise<{found: boolean, raw?: object}>}
- */
-export async function buscarProductoPorSku(sku) {
-  if (!sku || !sku.trim()) {
-    throw new Error("SKU vacío.");
-  }
+// Escapar la sintaxis de búsqueda es independiente de serializar el JSON.
+// El único comodín no escapado se añade expresamente para la búsqueda base.
+function escaparLiteralBusqueda(sku) {
+  return sku.replace(/[\\\s:()"'*<>!=\-]/gu, "\\$&");
+}
 
-  const accessToken = await obtenerAccessToken();
-
+async function consultarPaginaVariantes(accessToken, query, after) {
   const response = await fetch(endpointGraphQL(), {
     method: "POST",
     headers: {
@@ -143,7 +142,7 @@ export async function buscarProductoPorSku(sku) {
     },
     body: JSON.stringify({
       query: GRAPHQL_QUERY,
-      variables: { query: `sku:${sku.trim()}` },
+      variables: { query, after },
     }),
   });
 
@@ -158,19 +157,65 @@ export async function buscarProductoPorSku(sku) {
     throw new Error(`Error de conexión con Shopify (HTTP ${response.status}).`);
   }
 
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (_) {
+    throw new Error("Shopify devolvió una respuesta JSON inválida.");
+  }
 
-  if (data.errors) {
+  if (Array.isArray(data?.errors) && data.errors.length > 0) {
     throw new Error(
       "Shopify devolvió un error (revisa permisos/scopes de la app): " +
         data.errors.map((e) => e.message).join("; ")
     );
   }
 
-  const edge = data?.data?.productVariants?.edges?.[0];
-  if (!edge) {
-    return { found: false };
+  const variantes = data?.data?.productVariants;
+  if (!Array.isArray(variantes?.edges) || typeof variantes?.pageInfo?.hasNextPage !== "boolean") {
+    throw new Error("Shopify devolvió una respuesta de productos inválida.");
+  }
+  return variantes;
+}
+
+/**
+ * Una base devuelve todas sus publicaciones; un SKU con / devuelve solo
+ * coincidencias completas. La búsqueda de Shopify es amplia: el filtro
+ * final evita confundir bases como 10498 y 10498-1. Se recorren todas las
+ * páginas sin sustituir ni truncar el SKU original de cada variante.
+ * @param {string} sku
+ * @returns {Promise<{found: boolean, raws: object[], tipoBusqueda: "base"|"publicacion", skuBase: string}>}
+ */
+export async function buscarProductosPorSku(sku) {
+  const { skuCompleto, skuBase, tipoBusqueda } = analizarSku(sku);
+  const query = `sku:${escaparLiteralBusqueda(skuCompleto)}${tipoBusqueda === "base" ? "*" : ""}`;
+  const accessToken = await obtenerAccessToken();
+  const raws = [];
+  const idsVistos = new Set();
+  const cursoresVistos = new Set();
+  let after = null;
+
+  while (true) {
+    const pagina = await consultarPaginaVariantes(accessToken, query, after);
+    for (const edge of pagina.edges) {
+      const node = edge?.node;
+      if (typeof node?.sku !== "string") continue;
+      const coincide = tipoBusqueda === "base"
+        ? obtenerSkuBase(node.sku) === skuBase
+        : node.sku === skuCompleto;
+      if (!coincide || (node.id && idsVistos.has(node.id))) continue;
+      if (node.id) idsVistos.add(node.id);
+      raws.push(node);
+    }
+
+    if (!pagina.pageInfo.hasNextPage) break;
+    const siguiente = pagina.pageInfo.endCursor;
+    if (typeof siguiente !== "string" || !siguiente || cursoresVistos.has(siguiente)) {
+      throw new Error("Shopify devolvió una paginación de productos inválida; no se usaron resultados parciales.");
+    }
+    cursoresVistos.add(siguiente);
+    after = siguiente;
   }
 
-  return { found: true, raw: edge.node };
+  return { found: raws.length > 0, raws, tipoBusqueda, skuBase };
 }

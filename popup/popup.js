@@ -1,306 +1,197 @@
-// ============================================================
-// popup/popup.js
-// ============================================================
-// Interfaz para el empleado. Orquesta los módulos de shopify/,
-// utils/, images/, storage/ y rappi/. No contiene lógica de negocio
-// propia: solo llama a los módulos correspondientes y pinta el
-// resultado.
-// ============================================================
-
-import { buscarProductoPorSku } from "../shopify/shopify-api.js";
-import { desdeShopify, productoNoEncontrado, ESTADOS } from "../utils/model.js";
+import { desdeShopify, ESTADOS } from "../utils/model.js";
+import { analizarEntradaLote, consultarLote, resumirLote } from "../utils/lote.js";
+import { obtenerSkuBase } from "../utils/sku.js";
+import { validarImagenes } from "../images/image-handler.js";
 import { validarCamposObligatoriosRappi } from "../rappi/rappi-connector.js";
-import { validarImagenes, descargarImagenPrincipal } from "../images/image-handler.js";
-import {
-  guardarProducto,
-  guardarMatrizV11,
-  limpiarMatrizV11,
-  limpiarProductosProcesados,
-} from "../storage/storage.js";
-import { logger } from "../utils/logger.js";
-import { initRappiTab } from "./rappi-ui.js";
+import { calcularUnidadesDisponiblesAsociacion } from "../rappi/rappi-association.js";
+import { guardarProductos, obtenerProductos, limpiarProductosProcesados } from "../storage/storage.js";
+import { initRappiTab, cargarProductosValidados } from "./rappi-ui.js";
 
-await limpiarProductosProcesados();
+const $ = (id) => document.getElementById(id);
+const version = chrome.runtime.getManifest?.().version;
+if (version) $("version-extension").textContent = `v${version}`;
+const input = $("lote-input");
+let productos = [];
+let contexto = { entrada: "", solicitados: [], errores: [] };
+let buscando = false;
+let preparando = false;
+let fuenteShopify;
 
-// ---------------- Pestañas ----------------
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("activo"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("activo"));
-    btn.classList.add("activo");
-    document.getElementById(`tab-${btn.dataset.tab}`).classList.add("activo");
+async function obtenerFuenteShopify() {
+  try {
+    fuenteShopify ||= import("../shopify/shopify-api.js");
+    return await fuenteShopify;
+  } catch {
+    throw new Error("No se pudo conectar Shopify. Pide al administrador revisar la configuración de la tienda y recarga la extensión. Tu lote guardado se conserva.");
+  }
+}
+
+function mensaje(texto, tono = "info") {
+  $("mensaje-matriz").textContent = texto;
+  $("mensaje-matriz").dataset.tone = tono;
+}
+
+async function cambiarPaso(nombre) {
+  if (buscando || preparando) return;
+  document.querySelectorAll(".tab-btn").forEach((boton) => {
+    const activo = boton.dataset.tab === nombre;
+    boton.classList.toggle("activo", activo);
+    if (activo) boton.setAttribute("aria-current", "step");
+    else boton.removeAttribute("aria-current");
   });
+  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("activo", panel.id === `tab-${nombre}`));
+  if (nombre === "rappi" || nombre === "asociacion") await cargarProductosValidados();
+}
+
+document.querySelectorAll(".tab-btn").forEach((boton) => boton.addEventListener("click", () => cambiarPaso(boton.dataset.tab)));
+$("btn-continuar-rappi").addEventListener("click", () => cambiarPaso("rappi"));
+$("btn-procesar-lote").addEventListener("click", () => procesar(false));
+$("btn-reintentar-pendientes").addEventListener("click", () => procesar(true));
+$("btn-descargar-matriz").addEventListener("click", descargarReporte);
+$("btn-nuevo-lote").addEventListener("click", async () => {
+  if (buscando || preparando) return;
+  await limpiarProductosProcesados();
+  productos = [];
+  contexto = { entrada: "", solicitados: [], errores: [] };
+  input.value = "";
+  mensaje("Lote vacío. Pega los códigos que quieres revisar.");
+  actualizarEntrada();
+  pintarResultados();
+  await cargarProductosValidados();
+  await cambiarPaso("lote");
 });
+input.addEventListener("input", actualizarEntrada);
+input.addEventListener("scroll", () => { $("sku-lineas").scrollTop = input.scrollTop; });
+window.addEventListener("panafargo:ocupado", ({ detail }) => { preparando = Boolean(detail?.ocupado); actualizarControles(); });
 
-// ---------------- V1.0 — Búsqueda individual ----------------
-const skuInput = document.getElementById("sku-input");
-const btnBuscar = document.getElementById("btn-buscar");
-const btnValidar = document.getElementById("btn-validar");
-const btnDescargar = document.getElementById("btn-descargar");
-const resultadoBox = document.getElementById("resultado");
-const mensajeBox = document.getElementById("mensaje");
+function actualizarEntrada() {
+  const analisis = analizarEntradaLote(input.value);
+  $("lote-conteo").textContent = `${analisis.bases.length} de 10 productos base · ${analisis.skus.length} códigos ingresados`;
+  const lineas = Math.max(7, input.value.split("\n").length);
+  $("sku-lineas").replaceChildren(...Array.from({ length: lineas }, (_, i) => {
+    const li = document.createElement("li"); li.textContent = i + 1; return li;
+  }));
+  if (analisis.errores.length) mensaje(analisis.errores.join("\n"), "error");
+  else if (!buscando) mensaje("");
+  actualizarControles();
+}
 
-let productoActual = null;
+function actualizarControles() {
+  const ocupado = buscando || preparando;
+  const resumen = resumirLote(productos, contexto.solicitados);
+  $("btn-procesar-lote").disabled = ocupado || !analizarEntradaLote(input.value).valido;
+  $("btn-procesar-lote").textContent = buscando ? "Buscando publicaciones…" : "Buscar y validar";
+  $("btn-reintentar-pendientes").disabled = ocupado || !(resumen.pendientes || contexto.errores.length);
+  $("btn-continuar-rappi").disabled = ocupado || resumen.listos === 0;
+  $("btn-continuar-rappi").textContent = resumen.listos ? `Continuar con ${resumen.listos} publicaciones listas` : "Continuar a Rappi";
+  $("btn-descargar-matriz").disabled = ocupado || !(productos.length || contexto.errores.length);
+  $("btn-nuevo-lote").disabled = ocupado;
+  input.disabled = ocupado;
+  document.querySelectorAll(".tab-btn").forEach((boton) => { boton.disabled = ocupado; });
+}
 
-btnBuscar.addEventListener("click", async () => {
-  const sku = skuInput.value.trim();
-  mostrarMensaje("");
-  if (!sku) return mostrarMensaje("Ingresa un SKU.");
+function validarParaRappi(producto) {
+  const conImagen = validarImagenes(producto);
+  const faltantes = validarCamposObligatoriosRappi(conImagen);
+  return { ...conImagen, estado: faltantes.length ? ESTADOS.BLOQUEADO : ESTADOS.VALIDADO };
+}
 
-  btnBuscar.disabled = true;
-  btnBuscar.textContent = "Buscando...";
+async function procesar(reintento) {
+  if (buscando || preparando) return;
+  const analisis = analizarEntradaLote(input.value);
+  const solicitados = reintento
+    ? [...new Set([...productos.filter((p) => p.estado !== ESTADOS.VALIDADO).map((p) => p.sku), ...contexto.errores.map((e) => e.sku)])]
+    : analisis.skus;
+  if (!reintento && !analisis.valido) return mensaje(analisis.errores.join("\n") || "Ingresa al menos un código.", "error");
+  if (!solicitados.length) return;
+  buscando = true;
+  actualizarControles();
   try {
-    productoActual = await consultarYNormalizar(sku);
-    pintarResultado(productoActual);
-    await guardarProducto(productoActual);
-  } catch (err) {
-    logger.error(err);
-    mostrarMensaje(err.message || "Error consultando Shopify.");
-    resultadoBox.classList.add("oculto");
+    const { buscarProductosPorSku } = await obtenerFuenteShopify();
+    const resultado = await consultarLote(solicitados, {
+      buscar: buscarProductosPorSku, normalizar: desdeShopify, validar: validarParaRappi,
+      alProgreso: ({ completadas, total, publicaciones }) => mensaje(`Consultando ${completadas} de ${total} productos base · ${publicaciones} publicaciones encontradas.`),
+    });
+    const conservar = reintento ? productos.filter((p) => !solicitados.some((s) => s.includes("/") ? s === p.sku : obtenerSkuBase(s) === obtenerSkuBase(p.sku))) : [];
+    const nuevosProductos = [...new Map([...conservar, ...resultado.productos].map((p) => [p.sku, p])).values()];
+    const nuevoContexto = { entrada: input.value, solicitados: reintento ? contexto.solicitados : analisis.skus, errores: resultado.errores };
+    await guardarProductos(nuevosProductos, { reemplazar: true, contexto: nuevoContexto });
+    productos = nuevosProductos;
+    contexto = nuevoContexto;
+    pintarResultados();
+    await cargarProductosValidados();
+    const resumen = resumirLote(productos, contexto.solicitados);
+    mensaje(`${resumen.bases} productos base · ${resumen.publicaciones} publicaciones. ${resumen.listos} listas y ${resumen.pendientes + contexto.errores.length} pendientes.`, resumen.pendientes || contexto.errores.length ? "warning" : "ok");
+  } catch (error) {
+    mensaje(error.message || "No se pudo completar la consulta. El lote anterior sigue guardado.", "error");
   } finally {
-    btnBuscar.disabled = false;
-    btnBuscar.textContent = "Buscar en Shopify";
+    buscando = false;
+    actualizarControles();
   }
-});
-
-btnValidar.addEventListener("click", async () => {
-  if (!productoActual) return;
-  productoActual = validarProductoCompleto(productoActual);
-  pintarResultado(productoActual);
-  await guardarProducto(productoActual);
-  const faltantes = validarCamposObligatoriosRappi(productoActual);
-  mostrarMensaje(
-    faltantes.length
-      ? `Producto bloqueado: ${faltantes.map((faltante) => faltante.motivo).join(" ")}`
-      : "Producto validado y listo para Rappi.",
-    faltantes.length > 0
-  );
-});
-
-btnDescargar.addEventListener("click", async () => {
-  if (!productoActual) return;
-  btnDescargar.disabled = true;
-  try {
-    await descargarImagenPrincipal(productoActual);
-    mostrarMensaje(`Imagen de ${productoActual.sku} descargada.`, false);
-  } catch (err) {
-    mostrarMensaje(err.message, true);
-  } finally {
-    btnDescargar.disabled = false;
-  }
-});
-
-async function consultarYNormalizar(sku) {
-  const respuesta = await buscarProductoPorSku(sku);
-  if (!respuesta.found) {
-    return productoNoEncontrado(sku);
-  }
-  return desdeShopify(respuesta.raw);
 }
 
-function pintarResultado(producto) {
-  resultadoBox.classList.remove("oculto");
-  document.getElementById("resultado-img").src = producto.imagen_principal || "";
-  document.getElementById("resultado-nombre").textContent = producto.nombre || "(sin nombre — SKU no encontrado)";
-  document.getElementById("resultado-sku").textContent = producto.sku;
-
-  const estadoEl = document.getElementById("resultado-estado");
-  estadoEl.textContent = producto.estado;
-  estadoEl.className = `estado ${producto.estado}`;
-
-  btnDescargar.disabled = !producto.imagen_principal;
+function elemento(tag, clase, texto) {
+  const e = document.createElement(tag); if (clase) e.className = clase; if (texto != null) e.textContent = texto; return e;
 }
 
-function mostrarMensaje(texto, esError = true) {
-  mensajeBox.textContent = texto;
-  mensajeBox.style.color = esError ? "#b02a2a" : "#1e7a34";
-}
-
-// ---------------- V1.1 — Prueba con 10 productos reales ----------------
-const LIMITE_PRUEBA_V11 = 10;
-
-const loteInput = document.getElementById("lote-input");
-const btnProcesarLote = document.getElementById("btn-procesar-lote");
-const tablaMatriz = document.getElementById("tabla-matriz");
-const tablaMatrizBody = document.getElementById("tabla-matriz-body");
-const mensajeMatriz = document.getElementById("mensaje-matriz");
-const loteConteo = document.getElementById("lote-conteo");
-
-btnProcesarLote.addEventListener("click", procesarYDescargarMatriz);
-loteInput.addEventListener("input", limitarLineasSku);
-loteInput.addEventListener("keydown", (evento) => {
-  if (evento.key !== "Enter") return;
-
-  const valor = loteInput.value;
-  const nuevoValor =
-    valor.slice(0, loteInput.selectionStart) +
-    "\n" +
-    valor.slice(loteInput.selectionEnd);
-  if (nuevoValor.split("\n").length > LIMITE_PRUEBA_V11) {
-    evento.preventDefault();
-    mostrarMensajeMatriz(`Máximo ${LIMITE_PRUEBA_V11} líneas de SKU.`);
-  }
-});
-loteInput.addEventListener("paste", (evento) => {
-  const pegado = evento.clipboardData?.getData("text");
-  if (pegado == null) return;
-
-  evento.preventDefault();
-  const textoPegado = pegado.replace(/\r\n?/g, "\n");
-  const inicioSeleccion = loteInput.selectionStart;
-  const finSeleccion = loteInput.selectionEnd;
-  const valor =
-    loteInput.value.slice(0, inicioSeleccion) +
-    textoPegado +
-    loteInput.value.slice(finSeleccion);
-  const lineas = valor.split("\n");
-  const limitado = lineas.slice(0, LIMITE_PRUEBA_V11).join("\n");
-  const posicionCursor = Math.min(
-    inicioSeleccion + textoPegado.length,
-    limitado.length
-  );
-  loteInput.value = limitado;
-  loteInput.setSelectionRange(posicionCursor, posicionCursor);
-  if (lineas.length > LIMITE_PRUEBA_V11) {
-    mostrarMensajeMatriz(`Solo se pegaron las primeras ${LIMITE_PRUEBA_V11} líneas.`);
-  }
-  actualizarConteoSku();
-});
-actualizarConteoSku();
-
-function limitarLineasSku() {
-  const lineas = loteInput.value.split("\n");
-  if (lineas.length > LIMITE_PRUEBA_V11) {
-    const posicionCursor = loteInput.selectionStart;
-    loteInput.value = lineas.slice(0, LIMITE_PRUEBA_V11).join("\n");
-    loteInput.setSelectionRange(
-      Math.min(posicionCursor, loteInput.value.length),
-      Math.min(posicionCursor, loteInput.value.length)
-    );
-    mostrarMensajeMatriz(`Máximo ${LIMITE_PRUEBA_V11} líneas de SKU.`);
-  }
-  actualizarConteoSku();
-}
-
-function actualizarConteoSku() {
-  const skus = new Set(
-    loteInput.value
-      .split("\n")
-      .map((sku) => sku.trim())
-      .filter(Boolean)
-  );
-  loteConteo.textContent = `${skus.size}/${LIMITE_PRUEBA_V11} SKU`;
-}
-
-async function procesarYDescargarMatriz() {
-  const skus = [...new Set(loteInput.value.split("\n").map((sku) => sku.trim()).filter(Boolean))];
-  if (skus.length === 0) return mostrarMensajeMatriz("Ingresa al menos un SKU.");
-  if (skus.length > LIMITE_PRUEBA_V11) {
-    return mostrarMensajeMatriz(`Máximo ${LIMITE_PRUEBA_V11} SKU por proceso.`);
-  }
-
-  mostrarMensajeMatriz("");
-  btnProcesarLote.disabled = true;
-  btnProcesarLote.textContent = "Procesando...";
-  try {
-    await limpiarMatrizV11();
-    tablaMatrizBody.innerHTML = "";
-    tablaMatriz.classList.remove("oculto");
-
-    const matriz = [];
-    for (const sku of skus) {
-      const fila = await procesarSkuParaMatriz(sku);
-      matriz.push(fila);
-      await guardarMatrizV11(fila);
-      pintarFilaMatriz(fila);
+function pintarResultados() {
+  const resumen = resumirLote(productos, contexto.solicitados);
+  for (const campo of ["bases", "publicaciones", "listos", "pendientes"]) $("resumen-" + campo).textContent = campo === "pendientes" ? resumen.pendientes + contexto.errores.length : resumen[campo];
+  const cards = productos.map((p) => {
+    const card = elemento("article", "product-card"); card.dataset.sku = p.sku;
+    if (p.imagen_principal) {
+      const img = elemento("img", "product-image"); img.src = p.imagen_principal; img.alt = ""; img.loading = "lazy"; card.append(img);
+    } else card.append(elemento("div", "product-image image-placeholder", "Sin imagen"));
+    const body = elemento("div", "product-content");
+    const top = elemento("div", "product-top");
+    top.append(elemento("code", "product-sku", p.sku), elemento("span", "badge badge-base", `Base ${p.sku_base || obtenerSkuBase(p.sku)}`));
+    body.append(top, elemento("h3", "", p.nombre || p.sku));
+    const listo = p.estado === ESTADOS.VALIDADO;
+    body.append(elemento("span", listo ? "badge badge-ready" : "badge badge-pending", listo ? "Lista para Rappi" : "Faltan datos"));
+    const meta = elemento("div", "product-meta");
+    const origen = p.inventario_origen === "conteo_manual_shopify" ? "Conteo manual en Shopify" : "Existencias Shopify";
+    meta.append(elemento("span", "", `${origen}: ${p.inventario ?? "sin dato"}`), elemento("span", "", `Disponible para Rappi: ${p.inventario == null ? "sin dato" : calcularUnidadesDisponiblesAsociacion(p.inventario)}`));
+    body.append(meta);
+    const faltantes = validarCamposObligatoriosRappi(p);
+    if (faltantes.length) {
+      const ul = elemento("ul", "product-reasons"); faltantes.forEach((f) => ul.append(elemento("li", "", f.motivo))); body.append(ul);
     }
-
-    const validos = matriz.filter(
-      (fila) => fila.shopify === "OK" && fila.imagen === "OK" && fila.validacion === "OK"
-    );
-
-    const bloqueados = matriz.length - validos.length;
-    await descargarMatriz(matriz);
-    mostrarMensajeMatriz(
-      `Matriz descargada: ${validos.length} válido(s) y ${bloqueados} bloqueado(s). Revise las observaciones antes de preparar Rappi.`,
-      bloqueados > 0
-    );
-  } catch (err) {
-    logger.error(err);
-    mostrarMensajeMatriz(err.message || "No se pudo procesar o descargar la matriz.");
-  } finally {
-    btnProcesarLote.disabled = false;
-    btnProcesarLote.textContent = "Procesar y descargar matriz (.csv)";
-  }
-}
-
-async function procesarSkuParaMatriz(sku) {
-  try {
-    const producto = await consultarYNormalizar(sku);
-
-    if (producto.estado === ESTADOS.ERROR) {
-      return { sku, shopify: "ERROR", imagen: "ERROR", validacion: "BLOQUEADO", observaciones: "SKU no encontrado en Shopify (TC-02)" };
+    if (p.url_shopify && /^https:\/\//i.test(p.url_shopify)) {
+      const link = elemento("a", "", "Ver publicación en Shopify"); link.href = p.url_shopify; link.target = "_blank"; link.rel = "noopener noreferrer"; body.append(link);
     }
-
-    const validado = validarProductoCompleto(producto);
-    await guardarProducto(validado);
-
-    const faltantes = validarCamposObligatoriosRappi(validado);
-    const observaciones = faltantes.map((faltante) => faltante.motivo);
-
-    return {
-      sku,
-      shopify: "OK",
-      imagen: validado.imagen_principal ? "OK" : "ERROR",
-      validacion: validado.estado === ESTADOS.VALIDADO ? "OK" : "BLOQUEADO",
-      observaciones: observaciones.join("; "),
-    };
-  } catch (err) {
-    logger.error(err);
-    return { sku, shopify: "ERROR", imagen: "ERROR", validacion: "BLOQUEADO", observaciones: err.message || "Error de conexión (TC-05)" };
+    card.append(body); return card;
+  });
+  for (const error of contexto.errores) {
+    const card = elemento("article", "product-card");
+    const body = elemento("div", "product-content");
+    body.append(elemento("code", "product-sku", error.sku), elemento("h3", "", error.tipo === "NO_ENCONTRADO" ? "No se encontró una publicación" : "No se pudo consultar"), elemento("p", "product-reasons", error.mensaje));
+    card.append(elemento("div", "product-image image-placeholder", "Revisar"), body); cards.push(card);
   }
+  $("lista-productos").replaceChildren(...(cards.length ? cards : [elemento("p", "empty-state", "Pega los códigos y pulsa «Buscar y validar». Verás cada publicación por separado.")]));
+  actualizarControles();
 }
 
-function validarProductoCompleto(producto) {
-  const conImagenValidada = validarImagenes(producto);
-  const faltantes = validarCamposObligatoriosRappi(conImagenValidada);
-  return {
-    ...conImagenValidada,
-    estado: faltantes.length === 0 ? ESTADOS.VALIDADO : ESTADOS.BLOQUEADO,
-  };
+async function descargarReporte() {
+  const filas = [["Producto base", "SKU completo", "Producto", "Origen existencias", "Existencias Shopify", "Disponible Rappi", "Estado", "Observaciones"],
+    ...productos.map((p) => [p.sku_base, p.sku, p.nombre, p.inventario_origen, p.inventario, p.inventario == null ? "" : calcularUnidadesDisponiblesAsociacion(p.inventario), p.estado, validarCamposObligatoriosRappi(p).map((f) => f.motivo).join(" ")]),
+    ...contexto.errores.map((e) => [e.sku_base, e.sku, "", "", "", "", "PENDIENTE", e.mensaje])];
+  const csv = filas.map((fila) => fila.map((v) => {
+    const texto = String(v ?? ""); return `"${(/^[=+@-]/.test(texto) ? "'" + texto : texto).replace(/"/g, '""')}"`;
+  }).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  try { await chrome.downloads.download({ url, filename: `Panafargo_Rappi/Reportes/revision_${Date.now()}.csv`, saveAs: false }); }
+  catch (error) { mensaje(error.message || "No se pudo descargar el reporte.", "error"); }
+  finally { URL.revokeObjectURL(url); }
 }
 
-function pintarFilaMatriz(fila) {
-  const tr = document.createElement("tr");
-  [fila.sku, fila.shopify, fila.imagen, fila.validacion, fila.observaciones].forEach((valor) => {
-    const td = document.createElement("td");
-    td.textContent = valor;
-    tr.appendChild(td);
-  });
-  tablaMatrizBody.appendChild(tr);
+try {
+  const guardado = await chrome.storage.local.get("panafargo_lote_ui");
+  contexto = { ...contexto, ...guardado.panafargo_lote_ui };
+  productos = Object.values(await obtenerProductos());
+  input.value = contexto.entrada || "";
+  actualizarEntrada();
+  pintarResultados();
+  await initRappiTab();
+} catch (error) {
+  mensaje(error.message || "No se pudo recuperar el lote guardado.", "error");
 }
-
-async function descargarMatriz(matriz) {
-  const encabezado = "SKU,Shopify,Imagen,Validacion,Observaciones";
-  const filas = matriz.map((f) =>
-    [f.sku, f.shopify, f.imagen, f.validacion, f.observaciones]
-      .map((valor) => `"${String(valor ?? "").replace(/"/g, '""')}"`)
-      .join(",")
-  );
-  const csv = [encabezado, ...filas].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  await chrome.downloads.download({
-    url,
-    filename: `Panafargo_Rappi/Logs/matriz_validacion_${Date.now()}.csv`,
-    saveAs: false,
-  });
-}
-
-function mostrarMensajeMatriz(texto, esError = true) {
-  mensajeMatriz.textContent = texto;
-  mensajeMatriz.style.color = esError ? "#b02a2a" : "#1e7a34";
-}
-
-// ---------------- V2 — Preparar Rappi ----------------
-initRappiTab();

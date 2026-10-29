@@ -1,116 +1,107 @@
-# Panafargo Sync — V1.0 / V1.1 / V2 / V4
+# Panafargo Sync 4.1.2
 
-Extensión de Chrome que consulta productos de Shopify por SKU, los valida (imagen obligatoria), genera el lote listo para Rappi y puede subirlo directamente en el portal real de Rappi ("Mi Tienda"), usando tu propia sesión ya iniciada.
+Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
----
+## SKU base y publicación
 
-## 🔑 Credenciales de Shopify
+| SKU completo de Shopify | Producto base | Identidad para Rappi e inventario |
+| --- | --- | --- |
+| `11351/MoveForward` | `11351` | `11351/MoveForward` |
+| `11351/YourDream` | `11351` | `11351/YourDream` |
+| `10498-1/Femenino` | `10498-1` | `10498-1/Femenino` |
+| `10498-1/Masculino` | `10498-1` | `10498-1/Masculino` |
 
-**Viven en un único archivo:** `shopify/config.js` (no se sube al repo — está en `.gitignore`; la plantilla pública es `shopify/config.example.js`).
+Solo el texto anterior a la primera `/` se usa para comparar y contar productos base. Los guiones se conservan: `10498` y `10498-1` son referencias diferentes. Para almacenar, seleccionar, exportar y asociar se usa siempre el **SKU completo**.
 
-Desde enero de 2026, las apps creadas en el **Dev Dashboard** de Shopify ya no entregan un token permanente para copiar y pegar. En su lugar, guardas tu **Client ID + Client Secret** y `shopify/shopify-api.js` los intercambia automáticamente por un access token temporal (`client_credentials grant`, expira ~24h), cacheándolo en `chrome.storage.local`.
+- Una búsqueda por base encuentra todas sus publicaciones, recorriendo las páginas de Shopify y descartando coincidencias parciales.
+- Una búsqueda por SKU completo conserva únicamente esa publicación.
+- Cada base se consulta una vez por proceso, aunque se peguen varios de sus diseños.
+- El límite es de **10 bases**, que pueden representar **14 o más publicaciones**. El sistema no recorta silenciosamente las líneas.
+- Si el mismo SKU completo aparece en variantes distintas de Shopify, queda bloqueado para resolver la ambigüedad; no se suman inventarios ni se elige uno al azar.
 
-Requisitos para que el intercambio funcione (si ves error `app_not_installed` o un 400 del endpoint de token):
+## Instalación
 
-1. La app debe estar **instalada en esa tienda específica** (Dev Dashboard → tu app → Overview → link de instalación).
-2. Debe existir una **versión publicada ("Release")** con el scope `read_products` habilitado.
-3. La tienda debe pertenecer a tu misma organización de desarrollador.
+1. Crea `shopify/config.js` a partir de `shopify/config.example.js` y configura la tienda y la aplicación de Shopify. Este archivo está excluido de Git; no publiques credenciales.
+2. La aplicación de Shopify necesita estar instalada en esa tienda y tener habilitada la lectura de productos. El módulo obtiene y almacena temporalmente el access token mediante `client_credentials`.
+3. En Chrome, abre `chrome://extensions`, activa el modo desarrollador y carga esta carpeta como extensión descomprimida.
+4. Abre Panafargo Sync desde su icono. Las bibliotecas de Excel y ZIP ya están incluidas; la extensión no necesita una instalación con npm.
 
-**Importante:** Rappi **no** tiene una API pública para el flujo de "Mi Tienda" (carga por lotes personalizados). Por eso V4 no usa credenciales de Rappi en absoluto — automatiza el formulario real usando la sesión que ya iniciaste tú mismo en el navegador (ver más abajo).
+Al actualizar desde 4.0.0, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera de la ventana permite comprobar la versión instalada. La carga por SKU comprueba que la pestaña tenga activo el código nuevo antes de enviar el lote.
 
----
+## Flujo para el usuario
 
-## Estructura del proyecto
+### 1. Revisar productos
 
+Pega los códigos y pulsa **Buscar y validar**. Cada publicación tiene su tarjeta con imagen, SKU completo, base, existencias, disponibilidad para Rappi y los datos pendientes. La foto propia de la variante tiene prioridad sobre la imagen general del producto.
+
+El resumen distingue productos base, publicaciones, listas y pendientes. Una base con diseños publicados no se marca como faltante por no existir un SKU idéntico a la base. **Reintentar pendientes** vuelve a consultar solo lo que necesita revisión. El reporte CSV es opcional: no se descarga un archivo cada vez que buscas.
+
+### 2. Preparar Rappi
+
+Las publicaciones listas se seleccionan automáticamente y las elecciones se conservan por SKU completo. Puedes desmarcar las que no quieres incluir. Los bloqueos siguen visibles y no pueden seleccionarse.
+
+- **Descargar lote e imágenes:** genera un Excel de creación y un solo paquete de imágenes.
+- **Preparar en Mi Tienda:** encuentra o abre la pestaña de Rappi. Debes tener tu sesión iniciada. Los lotes sin separadores conservan el ZIP automático; si hay SKU con `/`, las imágenes del lote se asignan automáticamente a sus filas por SKU completo. Solo después de confirmar las imágenes se continúa con la creación, sin confirmar la asociación final.
+- Si Mi Tienda ya está revisando imágenes de un lote anterior, la extensión se detiene. No aplica un ZIP nuevo sobre una plantilla que podría pertenecer a otro lote.
+- No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
+- Durante el procesamiento y la creación, una pantalla de espera opaca cubre la pestaña completa. Si aparece el fallo temporal de «página no encontrada», muestra la espera antes de la actualización automática. Esa barra representa el tiempo de espera, no una confirmación de productos creados; si falla la recuperación, se retira para permitir revisar el error.
+- **Reiniciar Rappi**, arriba del paso 2, borra selección, mensajes y la plantilla de asociación guardada, y vuelve a leer el lote fuente actual con todas las publicaciones desmarcadas. Conserva productos, conteos, contexto de búsqueda, equivalencias y credenciales de Shopify. No recarga ni modifica Mi Tienda. Si hay una operación activa o la pestaña no confirma su estado, conserva la preparación anterior.
+
+### Imágenes de SKU con `/`
+
+El Excel conserva `11351/MoveForward` tal cual. En cambio, `/` es un separador de carpetas dentro de un ZIP: `34534/hola.jpg` tiene como nombre final `hola.jpg`. **No se inventa que Rappi decodifique un nombre alternativo.**
+
+El frontend público de Mi Tienda permite adjuntar una imagen directamente a una fila, usando sus identificadores internos de producto y archivo. La extensión utiliza ese control para los lotes con `/`: primero recorre todas las páginas y comprueba que cada SKU completo aparezca exactamente una vez; después asigna la imagen principal de cada publicación en una segunda pasada. Comprueba una URL de imagen nueva y cargada y la ausencia del indicador de procesamiento. No usa el nombre del archivo para decidir a qué producto pertenece.
+
+Si falta un SKU, hay duplicados, cambian las filas, falla una imagen o no se puede confirmar su carga, no pulsa **Crear productos**. La cabecera muestra cuántas imágenes se han confirmado. La foto de cada diseño procede de su publicación de Shopify; no se suman ni comparten existencias. WebP se recodifica a JPEG para este recorrido; los adjuntos son JPG/PNG de hasta 1 MB.
+
+**Descargar lote y respaldo de imágenes** sigue disponible como alternativa local, con nombres seguros y mapas CSV/JSON que conservan el SKU completo. **No subas ese ZIP de respaldo mediante «Cárgalas aquí».** Extráelo si necesitas cargar imágenes individualmente. Las fuentes del contrato, los selectores y los límites de comprobación están en [docs/rappi-imagenes-por-sku.md](docs/rappi-imagenes-por-sku.md). Las pruebas locales y el código público no demuestran que una cuenta privada haya publicado productos.
+
+### 3. Asociar
+
+Selecciona la plantilla `.xlsx` que Rappi envía para el lote; se valida y guarda automáticamente, sin un botón Guardar. Una nueva plantilla válida reemplaza la anterior, incluidos su archivo y nombre. Si no es válida, se conserva la plantilla actual. El nombre vigente aparece en pantalla y se recupera al volver a abrir la extensión. También puedes volver a seleccionar un archivo actualizado que conserve el mismo nombre.
+
+**Descargar precios y existencias** completa únicamente las filas seleccionadas, encontrándolas por SKU completo en la columna G con el prefijo `PANAFARGOSAS_`.
+
+- K: precio calculado.
+- N: unidades disponibles después de la reserva.
+- Los identificadores, descripciones, descuento y disponibilidad de las filas seleccionadas se conservan.
+- Las filas ajenas al lote se eliminan del archivo generado para evitar actualizar otros productos.
+- No se sustituye un diseño ausente por su base. Se informa cada SKU completo que no tenga fila en la plantilla.
+- Los espacios exteriores del Excel se ignoran al buscar, conservando las celdas e identificadores originales. Los SKU duplicados se rechazan. Una plantilla guardada dañada no se cambia silenciosamente por otra con identificadores distintos.
+
+Sube el archivo generado en Mi Tienda, revísalo y confirma allí la asociación. La extensión no pulsa ese botón final ni recibe tu contraseña de Rappi.
+
+## Inventario y precio
+
+### Existencias
+
+El inventario se lee de `inventoryQuantity` de la variante exacta de Shopify. Para los SKU con `/`, ese dato es el **conteo manual registrado en Shopify por publicación**. No se toma de Webcol, de un archivo de productos ni del inventario de la base, y no se distribuye una cantidad compartida entre diseños.
+
+Se mantiene la reserva existente: menos de 50 unidades → `floor(inventario / 3)`; desde 50 → `floor(inventario / 2)`. Por ejemplo, dos diseños con 3 y 6 unidades producen 1 y 2 unidades para Rappi, respectivamente. El redondeo hacia abajo corresponde a cantidades de inventario, no al precio.
+
+### Precio
+
+P es el precio normal de Shopify: `compareAtPrice` si supera `price`; en los demás casos, `price`.
+
+- Hasta **$444.500 inclusive**: `(P × 0,80) ÷ 0,70`.
+- Por encima de **$444.500**: `(P × 0,90) ÷ 0,70`.
+- Solo el resultado final se redondea **hacia arriba** al siguiente múltiplo de $100, conservando los múltiplos exactos. Se usa aritmética entera.
+
+$350.000 produce $400.000; $516.700 produce $664.400. Al preparar el lote se recalcula el precio para no exportar un valor anterior guardado. El cálculo local no publica cambios sobre el catálogo existente de Rappi.
+
+## Verificación
+
+Con Node.js 24, desde la raíz:
+
+```bash
+node --test tests/*.test.mjs
 ```
-panafargo-sync/
-├── manifest.json
-├── popup/
-│   ├── popup.html
-│   ├── popup.css
-│   ├── popup.js
-│   └── rappi-ui.js                 ← pestaña "Preparar Rappi (V2 / V4)"
-├── shopify/
-│   ├── config.example.js
-│   ├── config.js                     ← ⚠️ credenciales reales, NO se sube
-│   └── shopify-api.js
-├── rappi/
-│   ├── rappi-catalog.js              ← catálogos REALES de Rappi (987 categorías, 15.688 marcas, 10 unidades)
-│   ├── rappi-connector.js            ← transforma PanafargoProduct → modelo Rappi + validación
-│   ├── rappi-batch.js                ← genera el .xlsx real y lo descarga
-│   ├── rappi-images-zip.js           ← arma el .zip de imágenes para Mi Tienda (V4)
-│   ├── mi-tienda-content-script.js   ← automatiza el formulario real de Mi Tienda (V4)
-│   └── plantilla-rappi-base.xlsx     ← plantilla oficial de Rappi, sin el producto de ejemplo
-├── images/
-│   └── image-handler.js
-├── storage/
-│   └── storage.js                    ← productos, matriz V1.1, equivalencias, trazabilidad
-├── utils/
-│   ├── model.js
-│   └── logger.js
-├── vendor/
-│   ├── xlsx.full.min.js              ← SheetJS, genera el .xlsx en el navegador
-│   └── jszip.min.js                  ← JSZip, arma el .zip de imágenes en el navegador
-└── icons/
-```
 
-## Uso — V1.0 (búsqueda individual)
+Las pruebas usan datos simulados y las bibliotecas y plantillas reales del repositorio: SKU, paginación, conteos, inventario separado, reserva, precios, imágenes, Excel y límites de automatización. No necesitan credenciales ni crean productos en Shopify o Rappi. La comprobación del portal real requiere una sesión autorizada y un lote de prueba revisado por el usuario.
 
-Sin cambios: pestaña **"Buscar 1 SKU"**.
+## Mantenimiento y expansión
 
-## Uso — Procesar hasta 10 productos
+`utils/sku.js` y `utils/lote.js` contienen identidad, agrupación y coordinación reutilizables. Shopify es la fuente; `rappi/` conserva las categorías, reserva, formato Excel y automatización específicos del destino. La estructura y los siguientes pasos para Mercado Libre están descritos en [docs/flujo-y-expansion.md](docs/flujo-y-expansion.md).
 
-Pega hasta **10 SKU**, uno por línea, y pulsa **"Procesar y descargar matriz (.csv)"**. El campo muestra las líneas numeradas del 1 al 10, indica cuántos SKU distintos se ingresaron y no permite superar las diez líneas. La matriz muestra y descarga todos los productos: marca como bloqueados los que no cumplen los requisitos de Rappi (incluido peso/unidad faltante o inventario negativo) y detalla el motivo. Solo los productos en `OK` quedan disponibles en **Preparar Rappi**.
-
-## Uso — V2 (preparar el lote)
-
-1. Valida al menos un producto en las pestañas V1.0/V1.1.
-2. Ve a **"Preparar Rappi (V2)"** → **"Cargar productos validados"**. Puedes pulsarlo de nuevo tras validar más SKU: agrega los nuevos a la lista y conserva los ya cargados y seleccionados. Usa **"Todos"** en el encabezado para seleccionar/deseleccionar los productos listos, o marca solo los que necesites. Los productos incompletos no se pueden seleccionar.
-3. Cada producto se transforma automáticamente usando **solo datos de Shopify** (nombre, categoría estándar —`category.fullName`— o, si falta, tipo de producto —`productType`—, descripción y peso). El SKU es el único dato manual — lo usaste para buscar el producto, y vuelve a usarse aquí como identificador de la fila y del archivo de imagen.
-4. La **categoría se asigna automáticamente**: el sistema compara la categoría de Shopify contra las opciones reales del catálogo de Rappi y elige la mejor coincidencia por palabras en común, guardándola para reutilizarla. Si no encuentra una coincidencia válida o falta categoría, usa **"Papelería y oficina > Papelería > Otros Papelería"**. La marca es opcional y se deja en blanco en la plantilla.
-5. El precio de asociación se calcula al consultar y preparar cada producto, usando el precio normal de Shopify (`compareAtPrice` si es mayor que el precio actual; de lo contrario, `price`). Hasta **$444.500 inclusive**, se resta **20 %**; por encima de ese valor, se resta **10 %**. El importe resultante se divide entre **0,70** y solo entonces se redondea hacia arriba al siguiente múltiplo de **$100** (si ya es múltiplo exacto, se conserva). La fórmula es `100 × ceil((precioBase × factor) / (0,70 × 100))`, con factor `0,80` o `0,90`, usando aritmética entera para evitar errores de precisión. Por ejemplo, $350.000 da $400.000 y $516.700 da $664.400. Al preparar productos ya cargados se recalcula el precio; el Excel de asociación usa ese resultado actualizado. Este cálculo local no publica cambios en los precios existentes de Rappi.
-6. **"Descargar lote (.xlsx)"** — respaldo local: descarga `Panafargo_Rappi/Lotes/lote_rappi_{fecha}.xlsx` (igual a la plantilla oficial) y la imagen de cada producto en `Panafargo_Rappi/Imagenes/{sku}.jpg`.
-7. La X junto al SKU lo quita de la lista de esta sesión. Los productos procesados se olvidan al cerrar la ventana de la extensión.
-
-## Uso — V4 (subida directa a Rappi)
-
-1. Abre **Mi Tienda** (`mitienda.rappi.com.co`) en otra pestaña e inicia sesión con tu usuario normal. No hace falta navegar tú por el flujo — la extensión lleva la pestaña directo a `cms/catalog/bulk-creation/manual/1` si detecta que no estás ya ahí.
-2. En el popup de la extensión, con los productos ya cargados (paso V2), haz clic en **"Subir directamente a Rappi (Mi Tienda)"**.
-3. La extensión genera la plantilla `.xlsx` y un `.zip` con las imágenes (nombradas por SKU, como exige Rappi — ver "Reglas fijas") y se los envía a un *content script* que recorre las 6 pantallas reales del flujo, una detrás de otra, sin recargar la página:
-   1. **"Crea tus productos"** → clic en **"Personalizados"**.
-   2. **"Crea productos personalizados"** (introducción) → clic en su **"Subir plantilla"** (ese botón solo navega, no contiene el archivo).
-   3. **"Sube la plantilla"** → coloca el `.xlsx` en el input real, espera a que Rappi valide el archivo y habilite **"Continuar"**, y hace clic.
-   4. Pantalla de revisión → clic en **"¿Prefieres cargar múltiples imágenes a la vez? Cárgalas aquí"**.
-   5. En el panel que se abre → coloca el `.zip`, espera a que se habilite su **"Continuar"** (puede tardar según cuántas imágenes traiga). Mientras Rappi procesa las imágenes aparece una barra de carga grande y centrada; al terminar, la extensión continúa automáticamente.
-   6. Tras procesar las imágenes, la extensión pulsa **"Continuar"** y **"Crear productos"**. Se detiene en la pantalla de asociación; no pulsa **"Asociar productos"**.
-4. Si Mi Tienda muestra temporalmente "página no encontrada" durante la carga, la extensión indica que las imágenes siguen subiendo, actualiza la pestaña en un minuto y, si la pantalla se recuperó, continúa con la creación. Si no se recupera, revisa Mi Tienda y continúa manualmente.
-
-### Por qué V4 funciona así (y no por API)
-
-Investigué la API pública de Rappi (`dev-portal.rappi.com`): existe, pero es para gestión de **menús de restaurantes con pedidos en vivo** (requiere registro como "Rappi Aliado" y credenciales OAuth separadas) — no aplica al flujo de carga por lotes personalizados de "Mi Tienda", que no tiene API pública documentada. Automatizar eso a ciegas (adivinando endpoints internos) habría violado la regla del propio proyecto de no inventar el comportamiento del portal real (ver más abajo, "Reglas fijas"). Por eso V4 automatiza el **formulario visible**, con selectores confirmados contra el HTML real de las 6 pantallas de Mi Tienda, usando tu sesión ya iniciada — nunca credenciales.
-
-## Reglas fijas de este proyecto
-
-- **¿Es pesable?** y **¿Es preempaquetado?** siempre se exportan como `NO`.
-- **Cantidad** y **Unidad de medida** salen del peso registrado en Shopify (`inventoryItem.measurement.weight`); si el producto no tiene peso, queda bloqueado para Rappi.
-- Los productos con inventario no disponible o negativo también quedan bloqueados; corrige el dato en Shopify y vuelve a procesar el SKU.
-- **EAN** queda fuera del proyecto en todas las versiones.
-- La categoría se valida contra el catálogo real embebido en `rappi/rappi-catalog.js` — nunca se inventan valores. La columna opcional de marca de la plantilla oficial se conserva vacía.
-- El SKU liga la búsqueda en Shopify (V1.0), la fila del producto en el lote (V2) y el nombre del archivo dentro del .zip de imágenes (V4).
-- La extensión **nunca** pide, recibe ni guarda tu usuario/contraseña de Rappi — V4 solo interactúa con el DOM de una pestaña donde tú ya iniciaste sesión.
-- La creación de productos y la asociación son procesos independientes. La subida directa crea los productos y se detiene antes de **"Asociar productos"**; el usuario realiza la asociación por separado.
-
-### Si Rappi actualiza su plantilla, catálogos o el diseño de Mi Tienda
-
-- Catálogos/plantilla: regenerar `rappi/rappi-catalog.js` y `rappi/plantilla-rappi-base.xlsx` desde el Excel nuevo — no editar esos archivos a mano.
-- Diseño de Mi Tienda: los selectores de las 6 pantallas están documentados al inicio de `rappi/mi-tienda-content-script.js`; si Rappi cambia el HTML de alguna, hay que volver a capturar el HTML real de esa pantalla (clic derecho → Inspeccionar → Copy outerHTML) y actualizar su selector — no hay forma de saberlo sin verlo, así que este archivo es el primero en romperse si Rappi rediseña el flujo.
-
-## Qué NO incluye esta versión
-
-- Confirmar automáticamente la asociación de productos: la plantilla queda cargada y el usuario revisa y pulsa el botón final en Mi Tienda.
-- Gestión avanzada de imágenes, deduplicación, historial persistente → **V3** (no implementado).
-- Reintentos automáticos o reanudar una subida a medio camino si Mi Tienda fallara o cambiara de pantalla — hoy se detiene y reporta el paso exacto para continuar a mano.
-
-## Pruebas del precio
-
-Con Node.js 24, ejecuta `node --test tests/precios-rappi.test.mjs` desde la raíz del repositorio. Las pruebas comprueban la fórmula, el precio normal frente a rebajas de Shopify, los límites de $444.500, productos con un precio calculado anterior y el Excel de asociación. Usan datos locales simulados, sin credenciales ni solicitudes a Shopify o Rappi.
+El catálogo conserva las 987 categorías y equivalencias de peso utilizadas. Marca y EAN quedan vacíos en la plantilla de creación conforme a las reglas existentes. Peso ausente, inventario inválido, imagen ausente o SKU ambiguo bloquean la publicación. Si Rappi cambia sus pantallas o plantillas, deben comprobarse contra el portal real antes de modificar selectores o formatos.

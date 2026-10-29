@@ -40,7 +40,7 @@ export async function descargarImagenPrincipal(producto) {
   }
 
   const extension = obtenerExtension(producto.imagen_principal);
-  const nombreArchivo = `Panafargo_Rappi/Imagenes/${producto.sku}${extension}`;
+  const nombreArchivo = `Panafargo_Rappi/Imagenes/${nombreArchivoImagenLocal(producto.sku, extension)}`;
 
   const downloadId = await chrome.downloads.download({
     url: producto.imagen_principal,
@@ -50,6 +50,31 @@ export async function descargarImagenPrincipal(producto) {
 
   logger.info(`Imagen de SKU ${producto.sku} descargada (id ${downloadId}) en ${nombreArchivo}`);
   return nombreArchivo;
+}
+
+/**
+ * Nombre plano para una copia LOCAL. La codificación se puede revertir con
+ * decodeURIComponent, sin cambiar el SKU del producto. No implica que Rappi
+ * decodifique estos nombres al importar imágenes masivamente.
+ */
+export function nombreArchivoImagenLocal(sku, extension = ".jpg") {
+  if (typeof sku !== "string" || sku.length === 0) {
+    throw new Error("La imagen necesita un SKU completo no vacío.");
+  }
+  if (!/^\.(jpg|jpeg|png|webp|gif)$/i.test(extension)) {
+    throw new Error("La imagen necesita una extensión de archivo reconocida.");
+  }
+
+  // RFC 3986: también codifica %, separadores, caracteres de Windows y los
+  // caracteres que encodeURIComponent deja sin escapar pero no son seguros.
+  let nombre = encodeURIComponent(sku).replace(/[!'()*]/g, (caracter) =>
+    `%${caracter.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  // Windows reserva estos nombres incluso si se agrega una extensión.
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(nombre) || /^\.{1,2}$/.test(nombre)) {
+    nombre = `%${nombre.charCodeAt(0).toString(16).toUpperCase()}${nombre.slice(1)}`;
+  }
+  return `${nombre}${extension.toLowerCase()}`;
 }
 
 function obtenerExtension(url) {

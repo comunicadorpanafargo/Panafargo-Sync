@@ -39,6 +39,9 @@ export function validarCamposObligatoriosRappi(producto) {
   if (!producto.sku) {
     faltantes.push({ campo: "sku", motivo: "SKU no presente." });
   }
+  if (producto.conflicto_sku) {
+    faltantes.push({ campo: "sku", motivo: "El mismo SKU completo identifica varias publicaciones de Shopify. Corrige el duplicado antes de subirlo." });
+  }
   if (!producto.nombre) {
     faltantes.push({ campo: "nombre", motivo: "Nombre no presente en Shopify." });
   }

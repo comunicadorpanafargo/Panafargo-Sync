@@ -7,11 +7,11 @@
 //
 // V2 agrega los campos mínimos que el conector Rappi necesita para
 // transformar el producto (marca, categoría, descripción, peso).
-// Estos campos SIEMPRE se obtienen de Shopify — el empleado nunca
-// los digita a mano (la única entrada manual del flujo es el SKU,
-// tanto al buscar el producto como al quedar registrado en el lote
-// que se sube a Rappi).
+// El inventario pertenece a cada SKU completo de Shopify. Los diseños
+// con / tienen conteo manual registrado allí; no heredan stock de su base.
 // ============================================================
+
+import { normalizarSkuCompleto, obtenerSkuBase, obtenerDisenoSku, esSkuPublicacion } from "./sku.js";
 
 export const ESTADOS = Object.freeze({
   ENCONTRADO: "ENCONTRADO", // Producto localizado en Shopify
@@ -28,20 +28,28 @@ export const ESTADOS = Object.freeze({
  */
 export function desdeShopify(rawVariant) {
   const product = rawVariant.product;
-  const imagenes = (product.images?.edges || []).map((e) => e.node.url);
-  const imagenPrincipal = product.featuredImage?.url || imagenes[0] || null;
+  const sku = normalizarSkuCompleto(rawVariant.sku);
+  const imagenes = [...new Set([
+    rawVariant.image?.url,
+    product.featuredImage?.url,
+    ...(product.images?.edges || []).map((e) => e.node.url),
+  ].filter(Boolean))];
+  const imagenPrincipal = imagenes[0] || null;
 
   return {
     shopify_variant_id: rawVariant.id || null,
     shopify_product_id: product.id || null,
     nombre: product.title,
-    sku: rawVariant.sku,
+    sku,
+    sku_base: obtenerSkuBase(sku),
+    diseno_sku: obtenerDisenoSku(sku),
     nombre_variante: rawVariant.title || null,
     ean: rawVariant.barcode || null,
     precio: numeroNumero(rawVariant.price),
     precio_comparacion: numeroNumero(rawVariant.compareAtPrice),
     precio_rappi: calcularPrecioRappi(rawVariant.price, rawVariant.compareAtPrice),
     inventario: numeroEntero(rawVariant.inventoryQuantity),
+    inventario_origen: esSkuPublicacion(sku) ? "conteo_manual_shopify" : "shopify",
     disponible_para_venta: rawVariant.availableForSale === true,
     inventario_controlado: rawVariant.inventoryItem?.tracked === true,
     opciones_variante: rawVariant.selectedOptions || [],
@@ -55,44 +63,11 @@ export function desdeShopify(rawVariant) {
     categoria: normalizarTextoShopify(product.category?.fullName || product.productType),
     descripcion: limpiarHtml(product.descriptionHtml) || null,
     handle_shopify: product.handle || null,
+    url_shopify: product.onlineStoreUrl || null,
     etiquetas_shopify: product.tags || [],
     peso: rawVariant.inventoryItem?.measurement?.weight?.value ?? null,
     unidad_peso_shopify: rawVariant.inventoryItem?.measurement?.weight?.unit ?? null,
     presentacion: construirPresentacion(rawVariant.inventoryItem?.measurement?.weight),
-  };
-}
-
-/**
- * Producto vacío/no encontrado, para mantener un shape consistente
- * incluso cuando Shopify no devuelve resultados (TC-02).
- */
-export function productoNoEncontrado(sku) {
-  return {
-    shopify_variant_id: null,
-    shopify_product_id: null,
-    nombre: null,
-    sku,
-    nombre_variante: null,
-    ean: null,
-    precio: null,
-    precio_comparacion: null,
-    precio_rappi: null,
-    inventario: null,
-    disponible_para_venta: false,
-    inventario_controlado: false,
-    opciones_variante: [],
-    imagenes: [],
-    imagen_principal: null,
-    estado: ESTADOS.ERROR,
-    destinos: [],
-    marca: null,
-    categoria: null,
-    descripcion: null,
-    handle_shopify: null,
-    etiquetas_shopify: [],
-    peso: null,
-    unidad_peso_shopify: null,
-    presentacion: null,
   };
 }
 
