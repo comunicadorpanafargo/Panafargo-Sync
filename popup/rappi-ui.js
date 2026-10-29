@@ -20,6 +20,7 @@ let guardadoSeleccion = Promise.resolve();
 let refrescoPendiente = false;
 let inicializado = false;
 let ocupacionNotificada;
+let revisionParaRetomar = null;
 const el = (id) => document.getElementById(id);
 const seleccionadas = () => filas.filter((fila) => fila.resultado.ok && fila.seleccionada);
 const imagenesManuales = (lista) => lista.some(({ producto }) => /[\/\\]/.test(producto.sku));
@@ -30,6 +31,7 @@ export function initRappiTab() {
   inicializado = true;
   el("seleccionar-todos-rappi").addEventListener("change", (evento) => {
     if (estaOcupado()) return;
+    ocultarReanudacionRevision();
     for (const fila of filas) {
       if (!fila.resultado.ok) continue;
       fila.seleccionada = evento.target.checked;
@@ -39,7 +41,8 @@ export function initRappiTab() {
     guardarSeleccion();
   });
   el("btn-generar-lote-rappi").addEventListener("click", descargarArchivos);
-  el("btn-subir-mi-tienda").addEventListener("click", prepararEnMiTienda);
+  el("btn-subir-mi-tienda").addEventListener("click", () => prepararEnMiTienda());
+  el("btn-retomar-lote-rappi").addEventListener("click", () => prepararEnMiTienda({ reanudarRevision: true }));
   el("btn-refrescar-rappi").addEventListener("click", refrescarPreparacionRappi);
   el("input-plantilla-asociacion").addEventListener("change", guardarPlantilla);
   el("btn-descargar-plantilla-asociacion-generada").addEventListener("click", descargarAsociacion);
@@ -50,6 +53,7 @@ export function initRappiTab() {
 }
 
 export function cargarProductosValidados() {
+  ocultarReanudacionRevision();
   if (restauracionActual) return restauracionActual.then(cargarProductosValidados);
   if (ocupado) {
     refrescoPendiente = true;
@@ -116,6 +120,7 @@ function pintarPublicaciones() {
     checkbox.setAttribute("aria-label", `Incluir SKU ${producto.sku}`);
     checkbox.addEventListener("change", () => {
       if (estaOcupado()) return;
+      ocultarReanudacionRevision();
       fila.seleccionada = checkbox.checked;
       seleccionPorSku.set(producto.sku, checkbox.checked);
       actualizarControles();
@@ -162,6 +167,7 @@ function actualizarControles() {
   }
   el("input-plantilla-asociacion").disabled = bloqueado;
   el("btn-refrescar-rappi").disabled = bloqueado;
+  el("btn-retomar-lote-rappi").disabled = bloqueado || lista.length === 0 || !revisionParaRetomar;
   el("lista-rappi").querySelectorAll('input[type="checkbox"]').forEach((checkbox, indice) => {
     checkbox.disabled = bloqueado || !filas[indice]?.resultado.ok;
   });
@@ -214,6 +220,7 @@ async function consultarEstadoMiTienda(tabId) {
 
 async function refrescarPreparacionRappi() {
   await tarea("mensaje-rappi", async () => {
+    ocultarReanudacionRevision();
     mensaje("mensaje-rappi", "Comprobando que Mi Tienda no tenga una carga en curso…");
     const tabs = await chrome.tabs.query({ url: PATRON_MI_TIENDA });
     const estados = await Promise.all(tabs.map((tab) => consultarEstadoMiTienda(tab.id)));
@@ -283,36 +290,70 @@ async function descargarArchivos() {
   });
 }
 
-async function prepararEnMiTienda() {
+function ocultarReanudacionRevision() {
+  revisionParaRetomar = null;
+  el("btn-retomar-lote-rappi").hidden = true;
+  el("detalle-retomar-lote-rappi").hidden = true;
+}
+
+function ofrecerReanudacionRevision(tabId, lista) {
+  revisionParaRetomar = { tabId, seleccion: JSON.stringify(lista.map((fila) => fila.producto.sku)) };
+  el("btn-retomar-lote-rappi").hidden = false;
+  el("detalle-retomar-lote-rappi").hidden = false;
+}
+
+async function prepararEnMiTienda({ reanudarRevision = false } = {}) {
+  const revision = reanudarRevision ? revisionParaRetomar : null;
   await tarea("mensaje-rappi", async (lista) => {
+    ocultarReanudacionRevision();
     mensaje("mensaje-rappi", "Buscando Mi Tienda…");
-    const tabs = await chrome.tabs.query({ url: PATRON_MI_TIENDA });
-    let tab = tabs.find((pestana) => esPantallaCreacion(pestana.url)) || tabs[0];
-    if (!tab) {
-      await chrome.tabs.create({ url: URL_CREACION, active: true });
-      mensaje("mensaje-rappi", "Abrí Mi Tienda. Inicia sesión si se solicita y vuelve a pulsar Preparar en Mi Tienda.");
-      return;
-    }
-    if (!esPantallaCreacion(tab.url)) tab = await navegarYEsperarCarga(tab.id);
-    if (!esPantallaCreacion(tab.url)) {
-      mensaje("mensaje-rappi", "Revisa la pestaña de Mi Tienda e inicia sesión. Después vuelve a preparar el lote.", "warning");
-      return;
+    let tab;
+    if (reanudarRevision) {
+      if (!revision || revision.seleccion !== JSON.stringify(lista.map((fila) => fila.producto.sku))) {
+        throw new Error("La selección cambió o ya no hay un lote pendiente de retomar. Vuelve a preparar la selección para comprobar Mi Tienda.");
+      }
+      try { tab = await chrome.tabs.get(revision.tabId); } catch { /* La misma pestaña debe seguir abierta. */ }
+      if (!tab || tab.id !== revision.tabId || !esPantallaCreacion(tab.url)) {
+        throw new Error("La pestaña del lote abierto se cerró o cambió de pantalla. Revisa Mi Tienda y vuelve a preparar la selección; no se abrió ni modificó otra pestaña.");
+      }
+    } else {
+      const tabs = await chrome.tabs.query({ url: PATRON_MI_TIENDA });
+      tab = tabs.find((pestana) => esPantallaCreacion(pestana.url)) || tabs[0];
+      if (!tab) {
+        await chrome.tabs.create({ url: URL_CREACION, active: true });
+        mensaje("mensaje-rappi", "Abrí Mi Tienda. Inicia sesión si se solicita y vuelve a pulsar Preparar en Mi Tienda.");
+        return;
+      }
+      if (!esPantallaCreacion(tab.url)) tab = await navegarYEsperarCarga(tab.id);
+      if (!esPantallaCreacion(tab.url)) {
+        mensaje("mensaje-rappi", "Revisa la pestaña de Mi Tienda e inicia sesión. Después vuelve a preparar el lote.", "warning");
+        return;
+      }
     }
     const porSku = imagenesManuales(lista);
+    if (reanudarRevision && !porSku) throw new Error("Esta selección ya no corresponde al lote con imágenes por SKU completo. Vuelve a preparar la selección.");
     if (porSku) {
       const estado = await consultarEstadoMiTienda(tab.id);
       if (!estado?.ok || !estado.imagenesPorSku || typeof estado.cargaEnCurso !== "boolean") {
         throw new Error("Recarga la pestaña de Mi Tienda (F5) después de actualizar la extensión para activar las imágenes por SKU completo. Todavía no se envió el lote.");
       }
       if (estado.cargaEnCurso) throw new Error("Mi Tienda ya está procesando un lote. Espera su resultado antes de enviar otro.");
+      if (reanudarRevision && estado.reanudarRevisionPorSku !== true) {
+        throw new Error("Recarga la pestaña de Mi Tienda (F5) después de actualizar la extensión para activar la reanudación del lote abierto. No se enviaron imágenes ni se cambió la plantilla.");
+      }
     }
-    mensaje("mensaje-rappi", porSku ? "Preparando el Excel y las imágenes para vincular cada SKU completo…" : "Preparando el Excel y las imágenes…");
+    mensaje("mensaje-rappi", reanudarRevision ? "Preparando las imágenes para retomar el lote. Se conserva el Excel abierto en Mi Tienda…" : porSku ? "Preparando el Excel y las imágenes para vincular cada SKU completo…" : "Preparando el Excel y las imágenes…");
     const [xlsx, imagenes] = await Promise.all([
-      generarXlsxLoteRappi(lista.map((fila) => fila.resultado.rappiProduct)),
+      reanudarRevision ? Promise.resolve(null) : generarXlsxLoteRappi(lista.map((fila) => fila.resultado.rappiProduct)),
       porSku ? prepararImagenesIndividualesPorSku(lista) : construirZipImagenes(lista),
     ]);
     const lote = `lote_${Date.now()}`;
-    const solicitud = { tipo: "RAPPI_SUBIR_LOTE", xlsxBase64: await blobABase64(xlsx), xlsxNombre: `${lote}.xlsx`, skus: lista.map((fila) => fila.producto.sku) };
+    const solicitud = { tipo: "RAPPI_SUBIR_LOTE", skus: lista.map((fila) => fila.producto.sku) };
+    if (reanudarRevision) solicitud.reanudarRevision = true;
+    else {
+      solicitud.xlsxBase64 = await blobABase64(xlsx);
+      solicitud.xlsxNombre = `${lote}.xlsx`;
+    }
     if (porSku) {
       solicitud.imagenesPorSku = imagenes;
     } else {
@@ -324,7 +365,7 @@ async function prepararEnMiTienda() {
     if (new Blob([JSON.stringify(solicitud)]).size > 48 * 1024 * 1024) {
       throw new Error("El lote y sus imágenes son demasiado grandes para enviarlos juntos. Selecciona menos publicaciones y prepara el resto en otro lote.");
     }
-    mensaje("mensaje-rappi", porSku ? "Cargando el lote y asignando imágenes por SKU completo. Sigue el progreso en Mi Tienda…" : "Preparando el lote en Mi Tienda. Espera a que termine…");
+    mensaje("mensaje-rappi", reanudarRevision ? "Comprobando el lote abierto y asignando imágenes por SKU completo. Se conserva su plantilla. Sigue el progreso en Mi Tienda…" : porSku ? "Cargando el lote y asignando imágenes por SKU completo. Sigue el progreso en Mi Tienda…" : "Preparando el lote en Mi Tienda. Espera a que termine…");
     let respuesta;
     try {
       respuesta = await chrome.tabs.sendMessage(tab.id, solicitud);
@@ -335,6 +376,9 @@ async function prepararEnMiTienda() {
       throw error;
     }
     if (!respuesta?.ok) throw new Error(respuesta?.error || respuesta?.mensaje || "Mi Tienda no confirmó la preparación. Revisa su pestaña antes de repetir el envío.");
+    if (!reanudarRevision && porSku && respuesta.paso === "revision_lote_existente" && respuesta.reanudarRevisionDisponible === true) {
+      ofrecerReanudacionRevision(tab.id, lista);
+    }
     const tono = ["imagenes_error_rappi", "imagenes_formulario_no_encontrado", "zip_no_asignado"].includes(respuesta.paso) ? "error"
       : respuesta.paso === "productos_creados_pendiente_asociacion" ? "ok" : "warning";
     mensaje("mensaje-rappi", respuesta.mensaje || "Revisa el resultado en Mi Tienda. La asociación requiere tu confirmación.", tono);

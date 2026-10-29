@@ -127,6 +127,7 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   });
   vm.runInContext(contenido, contexto, { filename: "mi-tienda-content-script.js" });
   const esperarEstadoReal = contexto.esperarEstadoDelFlujo;
+  const continuarCrearReal = contexto.continuarYCcrearProductos;
   const input = {};
   // Simular solo las fronteras de DOM/espera. El manejador real del mensaje
   // decide si está permitido cargar imágenes, crear o detener el flujo.
@@ -146,7 +147,7 @@ function crearContenido(estadoInicial = "plantilla", { recuperacion = false } = 
   const enviar = (datos) => new Promise((resolve) => {
     receptor({ tipo: "RAPPI_SUBIR_LOTE", ...datos }, {}, resolve);
   });
-  return { contexto, operaciones, enviar, sesion, intervalos, esperarEstadoReal, pantallas };
+  return { contexto, operaciones, enviar, sesion, intervalos, esperarEstadoReal, continuarCrearReal, pantallas };
 }
 
 const plantilla = { xlsxBase64: "AA==", xlsxNombre: "lote-prueba.xlsx" };
@@ -195,7 +196,7 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.equal(pantallas.size, 0);
   });
 
-  test("una revisión anterior nunca recibe las imágenes por SKU de otro lote", async () => {
+  test("una revisión anterior ofrece retomar pero no recibe imágenes sin un clic explícito", async () => {
     const { contexto, enviar, operaciones } = crearContenido("imagenes");
     contexto.PanafargoImagenesPorSku = {
       validar: (_imagenes, skus) => ({ skus }),
@@ -206,6 +207,149 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.equal(resultado.paso, "revision_lote_existente");
     assert.equal(resultado.plantillaSubida, false);
     assert.equal(resultado.productosPublicados, false);
+    assert.equal(resultado.reanudarRevisionDisponible, true);
+    assert.match(resultado.mensaje, /conservará el Excel abierto/);
+    assert.deepEqual(operaciones, []);
+  });
+
+  test("retomar explícitamente conserva el Excel abierto, confirma imágenes y crea una sola vez", async () => {
+    const { contexto, enviar, operaciones, pantallas } = crearContenido("imagenes");
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async (paquete) => {
+        operaciones.push(["imagenes_sku", Array.from(paquete.skus)]);
+        return { skus: paquete.skus, imagenesSubidas: 2 };
+      },
+    };
+    const resultado = await enviar({ ...imagenesPorFila, reanudarRevision: true });
+    assert.equal(resultado.ok, true);
+    assert.equal(resultado.paso, "productos_creados_pendiente_asociacion");
+    assert.equal(resultado.revisionRetomada, true);
+    assert.equal(resultado.plantillaSubida, false);
+    assert.deepEqual(operaciones, [["imagenes_sku", imagenesPorFila.skus], ["crear"]]);
+    assert.equal(pantallas.size, 0);
+    assert.match(resultado.mensaje, /Se conservó la plantilla/);
+  });
+
+  for (const motivo of ["SKU ajeno al lote", "SKU duplicado", "Publicación faltante", "No se confirmó una imagen nueva"]) {
+    test(`al retomar, ${motivo} impide crear y no sustituye el Excel`, async () => {
+      const { contexto, enviar, operaciones, pantallas } = crearContenido("imagenes");
+      contexto.PanafargoImagenesPorSku = {
+        validar: (_imagenes, skus) => ({ skus }),
+        asignar: async () => { throw new Error(motivo); },
+      };
+      const resultado = await enviar({ ...imagenesPorFila, reanudarRevision: true });
+      assert.equal(resultado.ok, false);
+      assert.ok(resultado.error.includes(motivo));
+      assert.deepEqual(operaciones, []);
+      assert.equal(pantallas.size, 0);
+    });
+  }
+
+  test("si Mi Tienda cambia al formulario, retomar no carga un Excel nuevo", async () => {
+    const { contexto, enviar, operaciones } = crearContenido("plantilla");
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async () => { throw new Error("No debe asignar"); },
+    };
+    const resultado = await enviar({ ...imagenesPorFila, reanudarRevision: true });
+    assert.equal(resultado.ok, false);
+    assert.match(resultado.error, /ya no está disponible/);
+    assert.deepEqual(operaciones, []);
+  });
+
+  test("retomar no acepta ZIP ni el modo manual como sustitutos del manifiesto completo", async () => {
+    for (const solicitud of [plantilla, imagenesManuales, { ...plantilla, imagenesZipBase64: "ZIP" }]) {
+      const { enviar, operaciones } = crearContenido("imagenes");
+      const resultado = await enviar({ ...solicitud, reanudarRevision: true });
+      assert.equal(resultado.ok, false);
+      assert.match(resultado.error, /ya no está disponible/);
+      assert.deepEqual(operaciones, []);
+    }
+  });
+
+  test("si Crear se pulsó pero no llegó la confirmación, no se repite tras recargar", async () => {
+    const { contexto, operaciones, sesion, continuarCrearReal } = crearContenido("imagenes");
+    contexto.localStorage = { getItem: () => "123" };
+    contexto.esperarBotonHabilitadoConTexto = async () => ({ click: () => operaciones.push(["crear_real"]) });
+    contexto.esperarBotonPorTexto = async () => null;
+    await assert.rejects(continuarCrearReal(), /no confirmó que la creación terminó/);
+    assert.deepEqual(operaciones, [["crear_real"]]);
+    const marca = sesion.get("panafargoSync:creacionPendiente");
+    assert.equal(JSON.parse(marca).fileId, "123");
+    const recargado = crearContenido("imagenes");
+    recargado.sesion.set("panafargoSync:creacionPendiente", marca);
+    recargado.contexto.localStorage = { getItem: () => "123" };
+    recargado.contexto.PanafargoImagenesPorSku = { validar: (_imagenes, skus) => ({ skus }) };
+    for (const reanudarRevision of [false, true]) {
+      const respuesta = await recargado.enviar({ ...imagenesPorFila, reanudarRevision });
+      assert.equal(respuesta.ok, false);
+      assert.match(respuesta.error, /Ya se pulsó Crear productos/);
+      assert.deepEqual(recargado.operaciones, []);
+    }
+  });
+
+  test("confirmar la pantalla de asociación retira la marca sin pulsar Asociar", async () => {
+    const { contexto, operaciones, sesion, continuarCrearReal } = crearContenido("imagenes");
+    contexto.localStorage = { getItem: () => "123" };
+    contexto.esperarBotonHabilitadoConTexto = async () => ({ click: () => operaciones.push(["crear_real"]) });
+    contexto.esperarBotonPorTexto = async () => ({ click: () => operaciones.push(["asociar"]) });
+    await continuarCrearReal();
+    assert.deepEqual(operaciones, [["crear_real"]]);
+    assert.equal(sesion.has("panafargoSync:creacionPendiente"), false);
+  });
+
+  test("un ID cambiado por otra pestaña no permite retomar una creación incierta", async () => {
+    for (const actual of [null, "123", "124"]) {
+      const { contexto, enviar, operaciones, sesion } = crearContenido("imagenes");
+      contexto.localStorage = { getItem: () => actual };
+      sesion.set("panafargoSync:creacionPendiente", JSON.stringify({ fileId: "123" }));
+      contexto.PanafargoImagenesPorSku = { validar: (_imagenes, skus) => ({ skus }) };
+      const resultado = await enviar(imagenesPorFila);
+      assert.equal(resultado.ok, false);
+      assert.equal(sesion.has("panafargoSync:creacionPendiente"), true);
+      assert.deepEqual(operaciones, []);
+    }
+  });
+
+  test("una plantilla nueva confirmada con ID distinto permite continuar, sin repetir la anterior", async () => {
+    const { contexto, enviar, operaciones, sesion } = crearContenido("plantilla");
+    contexto.localStorage = { getItem: () => "124" };
+    sesion.set("panafargoSync:creacionPendiente", JSON.stringify({ fileId: "123" }));
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async (paquete) => {
+        operaciones.push(["imagenes_sku", Array.from(paquete.skus)]);
+        return { skus: paquete.skus, imagenesSubidas: 2 };
+      },
+    };
+    const resultado = await enviar(imagenesPorFila);
+    assert.equal(resultado.ok, true);
+    assert.equal(sesion.has("panafargoSync:creacionPendiente"), false);
+    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"], ["imagenes_sku", imagenesPorFila.skus], ["crear"]]);
+  });
+
+  for (const zip of [false, true]) test(`un archivo sin ID nuevo no recibe ${zip ? "ZIP" : "imágenes"} tras una creación incierta`, async () => {
+    const { contexto, enviar, operaciones, sesion } = crearContenido("plantilla");
+    contexto.localStorage = { getItem: () => "123" };
+    sesion.set("panafargoSync:creacionPendiente", JSON.stringify({ fileId: "123" }));
+    contexto.PanafargoImagenesPorSku = {
+      validar: (_imagenes, skus) => ({ skus }),
+      asignar: async () => { throw new Error("No debe asignar imágenes"); },
+    };
+    const resultado = await enviar(zip ? { ...plantilla, imagenesZipBase64: "ZIP-NUEVO" } : imagenesPorFila);
+    assert.equal(resultado.ok, false);
+    assert.match(resultado.error, /Ya se pulsó Crear productos/);
+    assert.deepEqual(operaciones, [["plantilla", "lote-prueba.xlsx"], ["continuar"]]);
+  });
+
+  test("una marca de creación ilegible bloquea la repetición en vez de asumir éxito", async () => {
+    const { contexto, enviar, operaciones, sesion } = crearContenido("imagenes");
+    contexto.localStorage = { getItem: () => "123" };
+    sesion.set("panafargoSync:creacionPendiente", "marca dañada");
+    const resultado = await enviar(plantilla);
+    assert.equal(resultado.ok, false);
+    assert.match(resultado.error, /Ya se pulsó Crear productos/);
     assert.deepEqual(operaciones, []);
   });
 
@@ -226,6 +370,7 @@ describe("Subida a Mi Tienda sin usar un lote anterior", () => {
     assert.equal(libre.ok, true);
     assert.equal(libre.cargaEnCurso, false);
     assert.equal(libre.versionExtension, "4.1.2");
+    assert.equal(libre.reanudarRevisionPorSku, false);
     sesion.set("panafargoSync:zipReloadIntento", "1");
     assert.equal((await consultar()).cargaEnCurso, true);
     assert.equal(sesion.get("panafargoSync:zipReloadIntento"), "1");

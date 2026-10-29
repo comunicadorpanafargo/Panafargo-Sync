@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1.2
+# Panafargo Sync 4.1.3
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -26,7 +26,7 @@ Solo el texto anterior a la primera `/` se usa para comparar y contar productos 
 3. En Chrome, abre `chrome://extensions`, activa el modo desarrollador y carga esta carpeta como extensión descomprimida.
 4. Abre Panafargo Sync desde su icono. Las bibliotecas de Excel y ZIP ya están incluidas; la extensión no necesita una instalación con npm.
 
-Al actualizar desde 4.0.0, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera de la ventana permite comprobar la versión instalada. La carga por SKU comprueba que la pestaña tenga activo el código nuevo antes de enviar el lote.
+Al actualizar la extensión, conserva tu `shopify/config.js`, recarga la extensión en `chrome://extensions` y recarga también Mi Tienda (F5). La cabecera de la ventana permite comprobar la versión instalada. La carga por SKU comprueba que la pestaña tenga activo el código nuevo antes de enviar el lote.
 
 ## Flujo para el usuario
 
@@ -42,7 +42,7 @@ Las publicaciones listas se seleccionan automáticamente y las elecciones se con
 
 - **Descargar lote e imágenes:** genera un Excel de creación y un solo paquete de imágenes.
 - **Preparar en Mi Tienda:** encuentra o abre la pestaña de Rappi. Debes tener tu sesión iniciada. Los lotes sin separadores conservan el ZIP automático; si hay SKU con `/`, las imágenes del lote se asignan automáticamente a sus filas por SKU completo. Solo después de confirmar las imágenes se continúa con la creación, sin confirmar la asociación final.
-- Si Mi Tienda ya está revisando imágenes de un lote anterior, la extensión se detiene. No aplica un ZIP nuevo sobre una plantilla que podría pertenecer a otro lote.
+- Si Mi Tienda ya está revisando imágenes, **Preparar en Mi Tienda** se detiene y, para los lotes con `/`, ofrece **Retomar lote abierto**. Este segundo botón conserva el Excel abierto en Rappi: revisa primero que sus datos sean correctos. Al retomarlo se comprueban todas las páginas y los SKU completos de la selección antes de enviar imágenes; un lote distinto, incompleto o duplicado se rechaza. Para usar un Excel nuevo, vuelve a **Subir plantilla** en Mi Tienda. Los ZIP no se aplican sobre una revisión anterior.
 - No se aceptan envíos simultáneos mientras se está procesando un lote o esperando el reintento de Rappi.
 - Durante el procesamiento y la creación, una pantalla de espera opaca cubre la pestaña completa. Si aparece el fallo temporal de «página no encontrada», muestra la espera antes de la actualización automática. Esa barra representa el tiempo de espera, no una confirmación de productos creados; si falla la recuperación, se retira para permitir revisar el error.
 - **Reiniciar Rappi**, arriba del paso 2, borra selección, mensajes y la plantilla de asociación guardada, y vuelve a leer el lote fuente actual con todas las publicaciones desmarcadas. Conserva productos, conteos, contexto de búsqueda, equivalencias y credenciales de Shopify. No recarga ni modifica Mi Tienda. Si hay una operación activa o la pestaña no confirma su estado, conserva la preparación anterior.
