@@ -44,6 +44,12 @@ function observar() {
   return { contexto, panel, document, comenzar, tick, enviar, vencer: () => vencer(), resultado: () => resultado };
 }
 
+function prepararSelectorZip(o, input) {
+  const drawer = Object.assign(elemento(), { querySelectorAll: () => [input] });
+  input.closest = (selector) => selector === "app-handle-images-actions" ? o.panel : drawer;
+  o.panel.nodos["lib-drawer"] = [drawer];
+}
+
 test("100 % de transferencia y éxito fuera del panel no confirman las imágenes", async () => {
   const o = observar();
   o.document.body.innerText = "Procesamiento completado en otro panel";
@@ -106,6 +112,7 @@ test("una URL firmada tardía conserva el bloqueo hasta completar las imágenes"
   const o = observar(); const operaciones = [];
   const plantilla = {};
   const zip = { closest: () => o.panel };
+  prepararSelectorZip(o, zip);
   o.document.querySelector = (selector) => selector.includes("products_catalog_upload_file_button") ? plantilla : null;
   Object.assign(o.contexto, {
     esperarEstadoDelFlujo: async () => ({ tipo: "plantilla" }),
@@ -149,6 +156,7 @@ test("la vista 404 conserva su señal de recuperación y la espera sin resultado
 for (const error of [false, true]) test(`la carga masiva ${error ? "se detiene ante error" : "continúa tras el éxito"} sin cambiar el recorrido de creación`, async () => {
   const o = observar(); const operaciones = [];
   const input = { closest: () => o.panel };
+  prepararSelectorZip(o, input);
   Object.assign(o.contexto, {
     esperarElementoPorTexto: async () => ({ click: () => operaciones.push("abrir_masiva") }),
     esperarSelector: async () => input,

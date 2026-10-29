@@ -1,4 +1,4 @@
-# Panafargo Sync 4.1.7
+# Panafargo Sync 4.1.8
 
 Extensión de Chrome para consultar publicaciones de Shopify, revisar sus datos y preparar su creación y asociación en Rappi. Conserva el trabajo al cerrar o recargar la ventana; **Nuevo lote** lo reinicia explícitamente.
 
@@ -53,6 +53,8 @@ Las publicaciones listas se seleccionan automáticamente y las elecciones se con
 ### Estado de las imágenes
 
 La versión 4.1.7 recupera el recorrido masivo de 4.0.0 para los SKU compatibles y conserva el diseño actual. El ZIP descargado sí es importable y solo contiene fotos con los nombres esperados por Rappi; no es el antiguo respaldo con mapas y nombres hash. Se mantienen JPG/PNG/WEBP de hasta 1 MB por imagen, sin ampliar artificialmente las fotos.
+
+En 4.1.8 se comprobó el vínculo entre el SKU de la columna D y los nombres del ZIP: `4354323-1` produce `4354323-1.jpg`, `4354323-1_1.jpg`, etc. El guion forma parte del SKU; el guion bajo identifica la secundaria. La carga se limita al selector ZIP del panel masivo abierto mediante **Cárgalas aquí**, el mismo control que utiliza **Subir archivo**. No se adjunta al primer selector ZIP de toda la página. Un panel ambiguo detiene el envío. La [auditoría del vínculo y del control nativo](docs/vinculacion-imagenes-rappi.md) documenta la comprobación.
 
 El tratamiento automático de `/` queda pendiente por decisión del usuario. Esos SKU siguen disponibles para consulta, inventario y asociación por su código completo; no se crea un lote nuevo con ellos desde este botón. Los módulos experimentales individuales se conservan para la investigación, fuera del recorrido de la interfaz.
 

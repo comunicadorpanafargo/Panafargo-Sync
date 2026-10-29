@@ -356,17 +356,14 @@ async function subirImagenes(
 ) {
   // ---- Paso 4: pantalla de revisión → abrir carga múltiple de imágenes ----
   establecerEtapa("abrir_carga_de_imagenes");
-  const linkMultiples = enlaceInicial || await esperarElementoPorTexto(
+  const linkMultiples = enlaceInicial || (inputInicial ? null : await esperarElementoPorTexto(
     "a, button, [role='button']",
     TEXTO_LINK_MULTIPLES_IMAGENES,
     15000
-  );
-  let inputZip = inputInicial;
-  if (!inputZip && linkMultiples) {
-    linkMultiples.click();
-    inputZip = await esperarSelector(SELECTOR_INPUT_ZIP, 15000);
-  }
-  if (!inputZip) {
+  ));
+  if (!inputInicial && linkMultiples) linkMultiples.click();
+  const destino = await esperarDestinoZipMasivo(15000, inputInicial);
+  if (!destino) {
     return {
       paso: "imagenes_formulario_no_encontrado",
       mensaje:
@@ -376,8 +373,13 @@ async function subirImagenes(
 
   // ---- Paso 5: subir el .zip y esperar "Continuar" del drawer ----
   establecerEtapa("asignar_zip");
+  const { input: inputZip, panel: panelImagenes } = destino;
   const archivoZip = base64AArchivo(imagenesZipBase64, imagenesZipNombre, "application/zip");
-  const panelImagenes = inputZip.closest?.("app-handle-images-actions") || null;
+  // Confirmar de nuevo el destino tras la espera: nunca adjuntar a un
+  // selector ZIP de otra pantalla o a una instancia anterior del drawer.
+  if (!buscarDestinoZipMasivo(inputZip)) {
+    throw new Error("El panel de carga masiva cambió antes de adjuntar el ZIP. Revisa Mi Tienda; no se envió el archivo.");
+  }
   asignarArchivosAInput(inputZip, [archivoZip]);
   const archivoAsignado = await esperarArchivosAsignados(inputZip, 5000);
   if (!archivoAsignado) {
@@ -429,6 +431,58 @@ async function subirImagenes(
     paso: "imagenes_sin_terminar",
     mensaje: `Pasaron ${r.segundos}s (10 min máx.) sin confirmar el resultado del procesamiento. ${r.detalle ? `El panel muestra: ${r.detalle}. ` : ""}Revisa Mi Tienda antes de refrescar o repetir el lote. ${traza}`,
   };
+}
+
+function buscarDestinoZipMasivo(inputInicial = null) {
+  const visible = (elemento) => elemento.getClientRects().length > 0 && getComputedStyle(elemento).visibility !== "hidden";
+  const paneles = Array.from(document.querySelectorAll("app-handle-images-actions")).filter(visible);
+  if (paneles.length > 1) {
+    throw new Error("Hay más de un panel de carga masiva de imágenes abierto. No se adjuntó el ZIP; cierra los paneles anteriores y revisa Mi Tienda.");
+  }
+  const panel = paneles[0];
+  const drawers = Array.from(panel?.querySelectorAll(SELECTOR_DRAWER) || []).filter(visible);
+  if (drawers.length > 1) {
+    throw new Error("El panel de imágenes contiene varios formularios abiertos. No se puede elegir un destino único para el ZIP.");
+  }
+  const drawer = drawers[0];
+  const inputs = Array.from(drawer?.querySelectorAll(SELECTOR_INPUT_ZIP) || [])
+    .filter((input) => input.closest("app-handle-images-actions") === panel && input.closest(SELECTOR_DRAWER) === drawer);
+  if (inputs.length > 1) {
+    throw new Error("El panel de carga masiva contiene varios selectores ZIP. No se adjuntó el archivo para evitar usar un formulario incorrecto.");
+  }
+  const input = inputs[0];
+  if (inputInicial && (inputInicial !== input || inputInicial.disabled)) {
+    throw new Error("El selector ZIP indicado no corresponde al panel de imágenes abierto o está deshabilitado. No se adjuntó el archivo.");
+  }
+  // El input nativo es hidden; la visibilidad se comprueba en sus
+  // contenedores, no en el propio input. Subir archivo abre este selector.
+  return input && !input.disabled ? { input, panel, drawer } : null;
+}
+
+function esperarDestinoZipMasivo(timeoutMs, inputInicial = null) {
+  return new Promise((resolve, reject) => {
+    let intervalo;
+    let timer;
+    const terminar = (destino, error = null) => {
+      clearInterval(intervalo);
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(destino);
+    };
+    const revisar = () => {
+      try {
+        const destino = buscarDestinoZipMasivo(inputInicial);
+        if (destino) terminar(destino);
+        return Boolean(destino);
+      } catch (error) {
+        terminar(null, error);
+        return true;
+      }
+    };
+    if (revisar()) return;
+    intervalo = setInterval(revisar, 100);
+    timer = setTimeout(() => terminar(null), timeoutMs);
+  });
 }
 
 async function continuarYCcrearProductos() {
