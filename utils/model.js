@@ -120,8 +120,10 @@ export function calcularPrecioRappi(precio, precioComparacion) {
   }
 
   const base = BigInt(precioBase);
-  const numerador = precioBase >= 400000 ? 5n : 10n;
-  const denominador = precioBase >= 400000 ? 400n : 900n;
+  // Descontar 20 % hasta $444.500 inclusive o 10 % por encima,
+  // dividir entre 0,70 y redondear solo el resultado final a centenas.
+  const numerador = precioBase > 444500 ? 9n : 8n;
+  const denominador = 700n;
   const centenas = (base * numerador + denominador - 1n) / denominador;
   const precioRappi = centenas * 100n;
 
