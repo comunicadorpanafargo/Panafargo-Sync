@@ -1,0 +1,152 @@
+* { box-sizing: border-box; }
+
+body {
+  width: 380px;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  margin: 0;
+  color: #222;
+  background: #fafafa;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+}
+.tab-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px;
+  border: none;
+  background: #eee;
+  color: #2c3e50;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tab-btn.activo { background: #fff; border-bottom: 2px solid #2c3e50; font-weight: bold; }
+
+.tab-panel { display: none; padding: 14px 16px; max-height: 620px; overflow-y: auto; }
+.tab-panel.activo { display: block; }
+
+.campo label { font-size: 12px; font-weight: bold; display: block; margin-bottom: 4px; }
+.fila { display: flex; gap: 6px; }
+input, textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+button {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: #2c3e50;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+button:disabled { background: #bbb; cursor: not-allowed; }
+button:hover:not(:disabled) { background: #1a252f; }
+
+.resultado {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid #ddd;
+  padding-top: 10px;
+}
+.resultado.oculto { display: none; }
+.resultado img { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; }
+.resultado-datos p { margin: 2px 0; font-size: 12px; }
+.acciones { margin-left: auto; display: flex; flex-direction: column; gap: 4px; }
+
+.estado { font-weight: bold; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+.estado.ENCONTRADO { background: #eaf2ff; color: #2255aa; }
+.estado.VALIDADO { background: #e6f6ea; color: #1e7a34; }
+.estado.BLOQUEADO { background: #fde8e8; color: #b02a2a; }
+.estado.ERROR { background: #fde8e8; color: #b02a2a; }
+.estado.LISTO { background: #eefbe9; color: #237a1f; }
+
+.mensaje { font-size: 12px; margin-top: 10px; color: #b02a2a; }
+
+.ayuda { font-size: 12px; color: #666; margin: 0 0 10px; }
+textarea { resize: vertical; margin-bottom: 8px; }
+.sku-editor {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #999;
+  border-radius: 5px;
+  background: #fff;
+}
+.sku-lineas {
+  height: 196px;
+  margin: 0;
+  padding: 6px 0;
+  overflow: hidden;
+  border-right: 1px solid #ddd;
+  background: #f1f3f5;
+  color: #666;
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: center;
+  list-style: none;
+}
+.sku-lineas li { height: 18.2px; }
+#lote-input {
+  height: 196px;
+  min-height: 196px;
+  max-height: 196px;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 8px;
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre;
+  resize: none;
+}
+.sku-conteo { margin: 4px 0 8px; color: #555; font-size: 11px; text-align: right; }
+
+.tabla-matriz { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 10.5px; }
+.tabla-matriz.oculto { display: none; }
+.tabla-matriz th, .tabla-matriz td { border: 1px solid #ddd; padding: 4px 5px; text-align: left; vertical-align: top; }
+.tabla-matriz th { background: #2c3e50; color: #fff; }
+.tabla-matriz input[type="checkbox"] { width: auto; }
+
+/* ---- V2 — Preparar Rappi ---- */
+.grupo-rappi {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+}
+.grupo-rappi h2 { margin: 0 0 8px; font-size: 15px; }
+.grupo-rappi > button { margin-bottom: 4px; }
+.acciones-rappi { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.acciones-rappi button { width: 100%; }
+#btn-restablecer-lotes { margin-top: 10px; background: #6c757d; }
+#seccion-plantilla-asociacion input[type="file"] { display: block; margin: 0; }
+#btn-subir-plantilla-asociacion-ahora { display: none; }
+#seccion-plantilla-asociacion .mensaje:empty { display: none; }
+#tab-rappi > .grupo-rappi:first-child { margin-top: 0; }
+.btn-quitar-producto { padding: 2px 6px; background: #6c757d; font-size: 14px; line-height: 1; }
+.seleccionar-todos { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.seleccionar-todos input { width: auto; margin: 0; }
+
+.equivalencia {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 6px;
+  background: #fff8e6;
+  border: 1px solid #f0d98c;
+  border-radius: 4px;
+}
+.equivalencia label { font-size: 10.5px; font-weight: bold; }
+.equivalencia input { font-size: 11px; padding: 4px 6px; }
+.equivalencia button { font-size: 10.5px; padding: 4px 6px; align-self: flex-start; }
